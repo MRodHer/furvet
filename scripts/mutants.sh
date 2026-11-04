@@ -44,6 +44,10 @@ run_mutant "deposit tool trusts an extra amount key" src/agent/tools.ts \
   test/booking.test.ts || status=1
 run_mutant "claude client sends temperature again (prod 400: deprecated)" src/agent/claude.ts \
   's/max_tokens: input.maxTokens,/max_tokens: input.maxTokens, temperature: 0.5,/' test/sim.test.ts || status=1
+run_mutant "claude response schema rejects thinking blocks again (prod: ZodError, bot mute)" src/agent/claude.ts \
+  '/}).passthrough(),/d' test/sim.test.ts || status=1
+run_mutant "claude catch-all swallows a malformed text block as opaque" src/agent/claude.ts \
+  's/z.string().refine((t) => t !== "text" \&\& t !== "tool_use")/z.string()/' test/sim.test.ts || status=1
 # ---- delivery (Constructora C, V20-C) ----
 run_mutant "bill ignores the captured deposit" src/billing.ts \
   's/balanceCents: Math.max(totalCents - depositCents, 0)/balanceCents: Math.max(totalCents, 0)/' test/billing.test.ts || status=1

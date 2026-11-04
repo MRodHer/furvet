@@ -7,7 +7,8 @@
 import type { Deps, Env } from "../env";
 import type { PayPalClient } from "../paypal";
 import { errName, log } from "../log";
-import { askClaude, ClaudeError, type ClaudeMessage, type ContentBlock } from "./claude";
+import { ZodError } from "zod";
+import { askClaude, ClaudeError, type ClaudeMessage, type ContentBlock, type ToolUseBlock } from "./claude";
 import { executeTool, TOOLS } from "./tools";
 
 const HISTORY_LIMIT = 20;
@@ -78,7 +79,13 @@ export async function runAgent(ctx: AgentContext, incomingText: string): Promise
   try {
     text = await toolLoop(ctx, messages);
   } catch (e) {
-    log("agent_error", { conversation_id: conversationId, error: errName(e), status: e instanceof ClaudeError ? (e.status ?? null) : null });
+    log("agent_error", {
+      conversation_id: conversationId,
+      error: errName(e),
+      status: e instanceof ClaudeError ? (e.status ?? null) : null,
+      // Zod issue PATHS only (e.g. "content.0.text"): never values, never model or owner text.
+      issues: e instanceof ZodError ? e.issues.slice(0, 10).map((i) => i.path.join(".")).join(",") : null,
+    });
     return null;
   }
   if (text === null) return null;
@@ -148,10 +155,8 @@ async function toolLoop(ctx: AgentContext, messages: ClaudeMessage[]): Promise<s
     if (res.stop_reason === "tool_use") {
       current.push({ role: "assistant", content: res.content as ContentBlock[] });
       const results: ContentBlock[] = [];
-      for (const block of res.content) {
-        if (block.type === "tool_use") {
-          results.push({ type: "tool_result", tool_use_id: block.id, content: await executeTool(ctx, block.name, block.input) });
-        }
+      for (const block of res.content.filter((b): b is ToolUseBlock => b.type === "tool_use")) {
+        results.push({ type: "tool_result", tool_use_id: block.id, content: await executeTool(ctx, block.name, block.input) });
       }
       current.push({ role: "user", content: results });
       continue;

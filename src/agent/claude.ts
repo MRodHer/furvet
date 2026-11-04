@@ -20,10 +20,15 @@ export interface ToolDef {
   input_schema: Record<string, unknown>;
 }
 
+export type ToolUseBlock = { type: "tool_use"; id: string; name: string; input: unknown };
+/** Any block we do not act on (thinking, redacted_thinking, future types): kept verbatim
+ *  so it can be echoed back in the next turn (the API requires thinking + signature intact). */
+export type OpaqueBlock = { type: string } & Record<string, unknown>;
 export type ContentBlock =
   | { type: "text"; text: string }
-  | { type: "tool_use"; id: string; name: string; input: unknown }
-  | { type: "tool_result"; tool_use_id: string; content: string };
+  | ToolUseBlock
+  | { type: "tool_result"; tool_use_id: string; content: string }
+  | OpaqueBlock;
 
 export interface ClaudeMessage {
   role: "user" | "assistant";
@@ -33,9 +38,11 @@ export interface ClaudeMessage {
 const ResponseSchema = z.object({
   stop_reason: z.string().nullable(),
   content: z.array(
-    z.discriminatedUnion("type", [
+    z.union([
       z.object({ type: z.literal("text"), text: z.string() }),
       z.object({ type: z.literal("tool_use"), id: z.string(), name: z.string(), input: z.unknown() }),
+      // thinking / redacted_thinking / unknown: never read, never dropped (passthrough keeps `signature`).
+      z.object({ type: z.string().refine((t) => t !== "text" && t !== "tool_use") }).passthrough(),
     ]),
   ),
 });
