@@ -202,4 +202,63 @@ describe("chat simulator + agent (E11, E13, E14, agent guards)", () => {
     expect(line).not.toContain("deprecated");
     assertNoPii(logs.lines);
   });
+
+  // Real production shape (measured 2026-11-04 with a live key, tools present, tool_choice auto).
+  const THINKING = { type: "thinking", thinking: "SECRET-THOUGHT el dueño quiere agendar", signature: "SIG-0123456789abcdef" };
+
+  it("thinking: [thinking, text, tool_use] runs the tool and echoes the thinking block + signature intact on the 2nd call", async () => {
+    const { conv, appt } = await seedBooking();
+    const first = {
+      stop_reason: "tool_use",
+      content: [THINKING, { type: "text", text: "Voy a revisar." }, { type: "tool_use", id: "tu-9", name: "create_deposit", input: { appointment_id: appt }, caller: { type: "direct" } }],
+    };
+    const { app, calls } = makeApp({ ...paypalFakes(), [PP.claude]: claudeScript([first, endTurn("Listo")]) });
+    expect(await (await chat(app, conv, "quiero pagar el anticipo")).json()).toEqual({ reply: "Listo", escalated: false });
+    const bodies = calls.filter((c) => c.key === PP.claude).map((c) => JSON.parse(c.body));
+    expect(bodies).toHaveLength(2);
+    const assistant = bodies[1].messages.at(-2);
+    expect(assistant.role).toBe("assistant");
+    expect(assistant.content[0]).toEqual(THINKING);
+    expect(bodies[1].messages.at(-1).content[0]).toMatchObject({ type: "tool_result", tool_use_id: "tu-9" });
+  });
+
+  it("thinking: [thinking, text] end_turn → reply is the text only; thinking never reaches reply, DB or logs", async () => {
+    const session = crypto.randomUUID();
+    const { app } = makeApp({ [PP.claude]: claudeScript([{ stop_reason: "end_turn", content: [THINKING, { type: "text", text: "Hola, ¿cómo se llama tu mascota?" }] }]) });
+    const logs = captureLogs();
+    let res: unknown;
+    try {
+      res = await (await chat(app, session, "hola")).json();
+    } finally {
+      logs.restore();
+    }
+    expect(res).toEqual({ reply: "Hola, ¿cómo se llama tu mascota?", escalated: false });
+    const stored = await env.DB.prepare("SELECT text FROM messages WHERE conversation_id = ?1").bind(session).all<{ text: string }>();
+    const everything = [JSON.stringify(res), ...stored.results.map((r) => r.text), ...logs.lines].join("\n");
+    expect(everything).not.toContain("SECRET-THOUGHT");
+    expect(everything).not.toContain(THINKING.signature);
+    assertNoPii(logs.lines);
+  });
+
+  it("thinking: an unknown block type does not throw; the text is still the reply", async () => {
+    const { app } = makeApp({ [PP.claude]: claudeScript([{ stop_reason: "end_turn", content: [{ type: "banana_v9", payload: { x: 1 } }, { type: "text", text: "ok" }] }]) });
+    expect(await (await chat(app, crypto.randomUUID(), "hola")).json()).toEqual({ reply: "ok", escalated: false });
+  });
+
+  it("agent_error on a malformed model response logs Zod issue PATHS only (no values, no text)", async () => {
+    const session = crypto.randomUUID();
+    const { app } = makeApp({ [PP.claude]: claudeScript([{ stop_reason: "end_turn", content: [{ type: "text", text: 12345678901 }] }]) });
+    const logs = captureLogs();
+    try {
+      expect(await (await chat(app, session, "hola")).json()).toEqual({ reply: null, escalated: false });
+    } finally {
+      logs.restore();
+    }
+    const line = logs.lines.find((l) => l.includes('"event":"agent_error"'));
+    expect(line).toBeDefined();
+    const parsed = JSON.parse(line!);
+    expect(parsed).toMatchObject({ error: "ZodError", status: null });
+    expect(parsed.issues).toMatch(/content\.0/);
+    expect(line).not.toContain("12345678901");
+  });
 });
