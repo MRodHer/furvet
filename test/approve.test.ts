@@ -459,3 +459,18 @@ describe("bill breakdown, editable quantities and owner-sourced medications (BB1
     expect(calls.length).toBe(0);
   });
 });
+
+describe("snapshot prices (TK4)", () => {
+  it("TK4: after approval the catalog price changes; «Generar cobro» sends the SNAPSHOT unit price, never today's", async () => {
+    const { consult, conv, ids } = await seedConsult();
+    const { app, calls } = makeApp(fakes());
+    expect((await post(app, consult, approvedBody(ids))).status).toBe(201);
+    await env.DB.prepare("UPDATE catalog_items SET price_cents = 99999 WHERE id = ?1").bind(ids["MED-AMOXI"]).run();
+    expect((await charge(app, consult)).status).toBe(201);
+    const pay = (await messages(conv)).results.map((m) => m.text).find((m) => m.includes("Liga para pagar"))!;
+    expect(pay).toContain("• MED-AMOXI ×1 $125.25 MXN = $125.25 MXN");
+    expect(pay).not.toContain("999.99");
+    const order = JSON.parse(calls.find((c) => c.key === PP.orders)!.body);
+    expect(order.purchase_units[0].items.map((i: { name: string; unit_amount: { value: string } }) => [i.name, i.unit_amount.value])).toContainEqual(["MED-AMOXI", "125.25"]);
+  });
+});

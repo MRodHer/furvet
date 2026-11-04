@@ -20,9 +20,11 @@ import { formatCents } from "../money";
 import type { PayPalClient } from "../paypal";
 import { MAX_EXPLANATION_CHARS, plainExplanation } from "../reports/explain";
 import { buildPdf } from "../reports/pdf";
-import { leafSource, leafValue, prescriptionLines, reportBlocks, rxBlocks, urgentLines, type ReportHeader } from "../reports/render";
+import { billTextLines, leafSource, leafValue, prescriptionLines, reportBlocks, rxBlocks, ticketBlocks, urgentLines, type ReportHeader, type RxDetails } from "../reports/render";
 
 const CONSULT_SKU = "CONSULTA-GENERAL";
+// The approved snapshot, in BillLine shape: the only price source after approval (never catalog_items again).
+const SNAPSHOT_LINES = "SELECT catalog_item_id AS catalogItemId, name, quantity, unit_price_cents AS unitPriceCents, line_total_cents AS lineTotalCents, source FROM bill_lines WHERE consult_id = ?1 ORDER BY id";
 const MAX_BODY_BYTES = 256 * 1024;
 
 interface BillRow {
@@ -41,6 +43,11 @@ interface ConsultRow {
   appointment_id: string;
   conversation_id: string;
   pet_name: string;
+  species: string;
+  breed: string | null;
+  sex: string | null;
+  birth_date: string | null;
+  owner_name: string; // rx letterhead only; never logged, never in the ticket or the chat
 }
 
 export function approveRoutes(deps: Deps, paypalFor: (env: Env) => PayPalClient | null) {
@@ -49,8 +56,8 @@ export function approveRoutes(deps: Deps, paypalFor: (env: Env) => PayPalClient 
 
   const loadConsult = (env: Env, id: string) =>
     env.DB.prepare(
-      `SELECT c.id, c.status, c.appointment_id, a.conversation_id, p.name AS pet_name
-       FROM consults c JOIN appointments a ON a.id = c.appointment_id JOIN pets p ON p.id = a.pet_id WHERE c.id = ?1`,
+      `SELECT c.id, c.status, c.appointment_id, a.conversation_id, p.name AS pet_name, p.species, p.breed, p.sex, p.birth_date, k.name AS owner_name
+       FROM consults c JOIN appointments a ON a.id = c.appointment_id JOIN pets p ON p.id = a.pet_id JOIN contacts k ON k.id = a.contact_id WHERE c.id = ?1`,
     )
       .bind(id)
       .first<ConsultRow>();
@@ -166,7 +173,7 @@ export function approveRoutes(deps: Deps, paypalFor: (env: Env) => PayPalClient 
       const obj = await env.FILES.get(row.r2_key);
       if (obj) images.push({ image: cleanImage(new Uint8Array(await obj.arrayBuffer())), caption: row.caption });
     }
-    const header: ReportHeader = { explanationByAi: byAi && explanation !== null, clinicName: env.CLINIC_NAME, doctorName: env.DOCTOR_DISPLAY_NAME, licenseLabel: env.DOCTOR_LICENSE_LABEL, petName: consult.pet_name, approvedAt };
+    const header: ReportHeader = { explanationByAi: byAi && explanation !== null, clinicName: env.CLINIC_NAME, doctorName: env.DOCTOR_DISPLAY_NAME, licenseLabel: env.DOCTOR_LICENSE_LABEL, petName: consult.pet_name, species: consult.species, folio: approvalId.slice(0, 8).toUpperCase(), approvedAt };
     await env.FILES.put(`reports/${approvalId}/report.pdf`, buildPdf(reportBlocks(body, header, explanation, images)), { httpMetadata: { contentType: "application/pdf" } });
     return header;
   }
@@ -200,14 +207,21 @@ export function approveRoutes(deps: Deps, paypalFor: (env: Env) => PayPalClient 
     // Second barrier before the column CHECK: a visible refusal, never a 500 from the batch.
     if (explanation.text.length > MAX_EXPLANATION_CHARS) return c.json({ error: "explanation too long" }, 422);
     const header = await putReport(env, consult, approvalId, body, null, explanation.source === "ai", now.toISOString());
-    await env.FILES.put(`reports/${approvalId}/rx.pdf`, buildPdf(rxBlocks(body, header)), { httpMetadata: { contentType: "application/pdf" } });
+    const rxDetails: RxDetails = { ownerName: consult.owner_name, breed: consult.breed, sex: consult.sex, birthDate: consult.birth_date, clinicAddress: env.CLINIC_ADDRESS, clinicPhone: env.CLINIC_PHONE, clinicEmail: env.CLINIC_EMAIL };
+    // Both PDFs land in R2 BEFORE the D1 batch: a failed put means no approval at all, never a half one.
+    await env.FILES.put(`reports/${approvalId}/rx.pdf`, buildPdf(rxBlocks(body, header, rxDetails)), { httpMetadata: { contentType: "application/pdf" } });
+    await env.FILES.put(`reports/${approvalId}/ticket.pdf`, buildPdf(ticketBlocks(header, bill, env.CURRENCY)), { httpMetadata: { contentType: "application/pdf" } });
 
     const rxText = [
       `Receta de ${consult.pet_name} (aprobada por el médico):`,
       ...prescriptionLines(body),
       ...(urgentLines(body).length ? ["", "INDICACIONES URGENTES:", ...urgentLines(body).map((u) => `• ${u}`)] : []),
       "",
+      "Cuenta:",
+      ...billTextLines(bill, env.CURRENCY),
+      "",
       `Receta en PDF: ${base}/rx/${rx.token}`,
+      `Cuenta en PDF: ${base}/t/${rx.token}`,
       bill.balanceCents > 0
         ? `Informe completo: ${base}/r/${report.token} (se libera al confirmarse el pago del saldo ${formatCents(bill.balanceCents, env.CURRENCY)}; la clínica le enviará la liga de pago)`
         : `Informe completo: ${base}/r/${report.token}`,
@@ -266,7 +280,8 @@ export function approveRoutes(deps: Deps, paypalFor: (env: Env) => PayPalClient 
       log("charge_refused", { reason: "paypal_not_configured", consult_id: consult.id });
       return c.json({ error: "payments not configured" }, 503);
     }
-    const { results: lines } = await env.DB.prepare("SELECT name, quantity, unit_price_cents FROM bill_lines WHERE consult_id = ?1 ORDER BY id").bind(consult.id).all<{ name: string; quantity: number; unit_price_cents: number }>();
+    const { results: lines } = await env.DB.prepare(SNAPSHOT_LINES).bind(consult.id).all<BillLine>();
+    const snapshot: Bill = { lines, totalCents: bill.total_cents, depositCents: bill.deposit_cents, balanceCents: bill.balance_cents };
     const chargeId = `balance-${consult.id}`;
     const order = await paypal.createOrder({
       amountCents: bill.balance_cents,
@@ -276,10 +291,10 @@ export function approveRoutes(deps: Deps, paypalFor: (env: Env) => PayPalClient 
       description: `Saldo de consulta veterinaria (${consult.pet_name})`.slice(0, 127),
       returnUrl: `${env.PUBLIC_BASE_URL}/paypal-return.html`,
       cancelUrl: `${env.PUBLIC_BASE_URL}/paypal-cancel.html`,
-      items: lines.map((l) => ({ name: l.name, quantity: l.quantity, unitCents: l.unit_price_cents })),
+      items: lines.map((l) => ({ name: l.name, quantity: l.quantity, unitCents: l.unitPriceCents })),
       discountCents: bill.deposit_cents,
     });
-    const text = `Liga para pagar el saldo de la consulta de ${consult.pet_name} (${formatCents(bill.balance_cents, env.CURRENCY)}): ${order.approveUrl}\nAl confirmarse el pago recibirá el informe completo.`;
+    const text = [`Cuenta de la consulta de ${consult.pet_name}:`, ...billTextLines(snapshot, env.CURRENCY), "", `Liga para pagar el saldo de la consulta de ${consult.pet_name} (${formatCents(bill.balance_cents, env.CURRENCY)}): ${order.approveUrl}`, "Al confirmarse el pago recibirá el informe completo."].join("\n");
     // claim (header → event) → message, each statement chained on "the previous one landed".
     const results = await env.DB.batch([
       ...claimChargeStatements(env.DB, { id: chargeId, kind: "balance", consultId: consult.id, conversationId: consult.conversation_id, paypalOrderId: order.orderId, paypalRequestId: chargeId, amountCents: bill.balance_cents, currency: env.CURRENCY, approveUrl: order.approveUrl }, order.raw),
@@ -324,7 +339,7 @@ export function approveRoutes(deps: Deps, paypalFor: (env: Env) => PayPalClient 
     const [sent, charge, lines] = await Promise.all([
       c.env.DB.prepare("SELECT created_at FROM explanation_releases WHERE consult_id = ?1").bind(consult.id).first<{ created_at: string }>(),
       currentCharge(c.env.DB, "consult_id", consult.id),
-      c.env.DB.prepare("SELECT catalog_item_id AS catalogItemId, name, quantity, unit_price_cents AS unitPriceCents, line_total_cents AS lineTotalCents, source FROM bill_lines WHERE consult_id = ?1 ORDER BY id").bind(consult.id).all<BillLine>(),
+      c.env.DB.prepare(SNAPSHOT_LINES).bind(consult.id).all<BillLine>(),
     ]);
     return c.json({
       approved: true,
