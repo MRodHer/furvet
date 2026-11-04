@@ -158,7 +158,7 @@ const ai = (value: unknown) => ({ value, source: "ai", segment_ids: [1], quote: 
 const doc = (value: unknown) => ({ value, source: "doctor" });
 
 /** V9 fixture: consulta 450.00 + vacuna 380.50 + 2 × 125.25 = 1081.00 */
-export function approvedBody(ids: Record<string, string>, extra: Record<string, unknown> = {}) {
+export function approvedBody(ids: Record<string, string>, extra: Record<string, unknown> = {}): Record<string, unknown> & { prescription: Record<string, unknown>[] } {
   return {
     subjective: { motivo_consulta: ai("vómito desde ayer"), apetito: doc("disminuido") },
     vitals: { temperatura: ai(39.5), peso: doc(12.4) },
@@ -195,7 +195,7 @@ export function fakeJpeg(withExif = true): Uint8Array {
 
 export function multipart(file: Uint8Array, filename: string, caption = "") {
   const fd = new FormData();
-  fd.append("file", new Blob([file as BlobPart], { type: "application/octet-stream" }), filename);
+  fd.append("file", new Blob([file.buffer as ArrayBuffer], { type: "application/octet-stream" }), filename);
   if (caption) fd.append("caption", caption);
   return fd;
 }
