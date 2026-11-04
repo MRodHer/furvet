@@ -84,6 +84,16 @@ describe("grounding validator (V4, V5, V6)", () => {
     expect(incompleteMedications({ prescription: [{ ...complete, duracion: undefined }] })).toEqual([{ index: 0, missing: ["duracion"] }]);
   });
 
+  it("V6-b: spelled-out units count as units (the transcriber writes «250 miligramos»); number AND unit still both required", () => {
+    const complete = { medicamento: g("amoxicilina", "amoxicilina", [3]), frecuencia: g("cada 12 horas", "cada 12 horas", [3]), duracion: g("7 días", "7 días", [3]) };
+    for (const ok of ["250 miligramos", "1 miligramo", "5 mililitros", "1 gramo", "2 gramos", "50 microgramos", "10 unidades internacionales", "1 unidad internacional"]) {
+      expect(incompleteMedications({ prescription: [{ ...complete, dosis: g(ok, ok, [3]) }] })).toEqual([]);
+    }
+    for (const bad of ["una tableta", "250", "miligramos", "miligramos cada doce horas", "250 miligramitos"]) {
+      expect(incompleteMedications({ prescription: [{ ...complete, dosis: g(bad, bad, [3]) }] })).toEqual([{ index: 0, missing: ["dosis"] }]);
+    }
+  });
+
   it("the schema has no price field and rejects one at any level (strict)", () => {
     const base = { subjective: {}, vitals: {}, physical_exam: {}, assessment: {}, plan: {}, prescription: [], vaccines: [], billable: [] };
     expect(ConsultDraft.safeParse({ ...base, precio: 100 }).success).toBe(false);
