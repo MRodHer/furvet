@@ -29,7 +29,7 @@ async function approved(captureValue = "881.00") {
   return { ...seeded, ...made, out, charge: charge!, msgCount, get, webhook };
 }
 
-describe("owner links /rx and /r (V10-V13, D.6)", () => {
+describe("owner links /t (ticket) and /r (V10-V13, D.6)", () => {
   let restore: (() => void) | null = null;
   afterEach(() => restore?.());
 
@@ -104,10 +104,10 @@ describe("owner links /rx and /r (V10-V13, D.6)", () => {
     const logs = captureLogs();
     restore = logs.restore;
     const t = await approved();
-    const rxToken = t.out.ticket_url.split("/t/")[1]!;
+    const ticketToken = t.out.ticket_url.split("/t/")[1]!;
     const reportToken = t.out.report_url.split("/r/")[1]!;
     const bodies = new Set<string>();
-    for (const path of [`/t/${reportToken}`, `/r/${rxToken}`, `/t/${rxToken.slice(0, -1)}x`, "/r/short", `/t/${"A".repeat(43)}`]) {
+    for (const path of [`/t/${reportToken}`, `/r/${ticketToken}`, `/t/${ticketToken.slice(0, -1)}x`, "/r/short", `/t/${"A".repeat(43)}`]) {
       const res = await t.app.request(path, {}, doctorEnv());
       expect(res.status, path).toBe(404);
       bodies.add(`${res.headers.get("content-type")}|${await res.text()}`);
@@ -117,7 +117,7 @@ describe("owner links /rx and /r (V10-V13, D.6)", () => {
     const rows = await env.DB.prepare("SELECT token_sha256 FROM delivery_tokens WHERE consult_id = ?1").bind(t.consult).all<{ token_sha256: string }>();
     for (const r of rows.results) {
       expect(r.token_sha256).toMatch(/^[0-9a-f]{64}$/);
-      expect([rxToken, reportToken]).not.toContain(r.token_sha256);
+      expect([ticketToken, reportToken]).not.toContain(r.token_sha256);
     }
     // Expiry: 31 days later the same links are gone.
     const later = makeApp(fakes(), new Date(NOW.getTime() + 31 * 24 * 3600 * 1000));
@@ -126,7 +126,7 @@ describe("owner links /rx and /r (V10-V13, D.6)", () => {
     const stillValid = makeApp(fakes(), new Date(NOW.getTime() + 29 * 24 * 3600 * 1000));
     expect((await stillValid.app.request(new URL(t.out.ticket_url).pathname, {}, doctorEnv())).status).toBe(200);
     const all = logs.lines.join("\n");
-    expect(all).not.toContain(rxToken);
+    expect(all).not.toContain(ticketToken);
     expect(all).not.toContain(reportToken);
     assertNoPii(logs.lines);
   });
@@ -147,17 +147,17 @@ describe("printable rx and account ticket (RX1, TK1–TK5)", () => {
     ]);
     const { app } = makeApp(fakes());
     const body = approvedBody(seeded.ids);
-    body.prescription.push({ medicamento: { value: "zzz-omeprazol", source: "doctor" }, dosis: { value: "10 mg", source: "doctor" }, frecuencia: { value: "cada 24 h", source: "doctor" }, duracion: { value: "5 días", source: "doctor" } });
+    body.prescription.push({ medicamento: { value: "aaa-omeprazol", source: "doctor" }, dosis: { value: "10 mg", source: "doctor" }, frecuencia: { value: "cada 24 h", source: "doctor" }, duracion: { value: "5 días", source: "doctor" } });
     const res = await app.request(`/api/v1/consults/${seeded.consult}/approve`, { method: "POST", headers: doctorHeaders({ "Content-Type": "application/json" }), body: JSON.stringify(body) }, doctorEnv());
     expect(res.status).toBe(201);
     const text = await pdfText(await app.request(`/api/v1/consults/${seeded.consult}/rx.pdf`, { headers: doctorHeaders() }, doctorEnv()));
     for (const s of ["2026-11-04", "FurVet demo clinic", "Calle Ejemplo 123", "55 0000 0000", "contacto@furvet.example", `Tutor: ${OWNER}`, "Paciente: Firulais (perro)", "Raza: labrador", "Edad: 3 años", "Peso: 12.4 kg", "Sexo: macho", "Folio ", "1. amoxicilina", "250 mg · cada 12 h · 7 días · vía oral", "MVZ (demo)", "Cédula profesional: DEMO", "Fecha de revisión: ____ / ____ / ________", "Firma: ______", "Original para el médico: imprimir, firmar y entregar.", "aprobado por el médico"]) expect(text, s).toContain(s);
     expect(text).not.toContain(EMAIL);
     expect(text).not.toContain("MXN");
-    // Order of medications = order approved (the second one sorts first alphabetically, so order is what is measured).
+    // Order of medications = order approved: «aaa-omeprazol» sorts BEFORE «amoxicilina», so an alphabetical sort would fail here.
     expect(text.indexOf("1. amoxicilina")).toBeGreaterThan(0);
-    expect(text.indexOf("1. amoxicilina")).toBeLessThan(text.indexOf("2. zzz-omeprazol"));
-    expect(text.indexOf("2. zzz-omeprazol")).toBeLessThan(text.indexOf("Indicaciones urgentes"));
+    expect(text.indexOf("1. amoxicilina")).toBeLessThan(text.indexOf("2. aaa-omeprazol"));
+    expect(text.indexOf("2. aaa-omeprazol")).toBeLessThan(text.indexOf("Indicaciones urgentes"));
   });
 
   it("RX3: ageLabel — years/months, singular, birthday today, future, impossible and garbage dates", () => {

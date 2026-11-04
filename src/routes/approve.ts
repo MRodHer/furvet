@@ -20,6 +20,7 @@ import { formatCents } from "../money";
 import type { PayPalClient } from "../paypal";
 import { MAX_EXPLANATION_CHARS, plainExplanation } from "../reports/explain";
 import { buildPdf } from "../reports/pdf";
+import { PRIVATE } from "./report";
 import { billTextLines, leafSource, leafValue, reportBlocks, rxBlocks, ticketBlocks, urgentLines, type ReportHeader, type RxDetails } from "../reports/render";
 
 const CONSULT_SKU = "CONSULTA-GENERAL";
@@ -362,7 +363,7 @@ export function approveRoutes(deps: Deps, paypalFor: (env: Env) => PayPalClient 
     const bill = await loadBill(c.env, c.req.param("id"));
     const obj = bill ? await c.env.FILES.get(`reports/${bill.approval_id}/rx.pdf`) : null;
     if (!obj) return c.json({ error: "not found" }, 404);
-    return new Response(obj.body, { headers: { "Content-Type": "application/pdf", "Content-Disposition": 'inline; filename="receta.pdf"', "Cache-Control": "no-store", "Referrer-Policy": "no-referrer", "X-Robots-Tag": "noindex, nofollow" } });
+    return new Response(obj.body, { headers: { "Content-Type": "application/pdf", "Content-Disposition": 'inline; filename="receta.pdf"', ...PRIVATE } });
   });
 
   return app;

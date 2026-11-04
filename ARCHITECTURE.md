@@ -224,7 +224,7 @@ Reglas del ciclo:
 ## 11. Front-end mínimo (consola y enlaces del dueño)
 
 - La consola del veterinario es una página estática servida **por el Worker** sólo tras la autenticación; CSP `default-src 'self'`; todo texto de transcripción se pinta con `textContent`.
-- Páginas del dueño (`/r/<token>`, `/rx/<token>`): `Cache-Control: no-store`, `Referrer-Policy: no-referrer`, `X-Robots-Tag: noindex`; nada cacheable, nada indexable.
+- Páginas del dueño (`/r/<token>`, `/t/<token>`): `Cache-Control: no-store`, `Referrer-Policy: no-referrer`, `X-Robots-Tag: noindex`; nada cacheable, nada indexable.
 - Los PDF son texto plano generado por el Worker (fuentes estándar, imágenes embebidas tal cual, sin decodificar) para caber en el presupuesto de CPU del plan gratuito; cualquier librería que decodifique imágenes está fuera.
 
 ## 12. Despliegue
