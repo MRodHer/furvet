@@ -61,7 +61,7 @@ Todo cambio la recorre; si toca autenticación, dinero, PII, un endpoint públic
 | Runtime              | Cloudflare Workers, TypeScript estricto           | Un solo Worker; sin Node APIs fuera de lo que soporta workerd                 |
 | HTTP                 | Hono                                              | `secureHeaders()` global; `onError` convierte excepciones de middleware en su respuesta y todo lo demás en 500 sin ruta concreta |
 | Validación           | Zod                                               | Todo cuerpo, query y salida de modelo pasa por un schema `.strict()`          |
-| Base de datos        | D1 (SQLite)                                       | Dinero `INTEGER` en centavos; `CHECK` en toda columna de texto y enum; triggers `RAISE(ABORT)` en tablas append-only |
+| Base de datos        | D1 (SQLite)                                       | Dinero `INTEGER` en centavos; `CHECK` de longitud o enum en toda columna de texto nueva que llega del cliente; triggers `RAISE(ABORT)` en tablas append-only |
 | Archivos             | R2                                                | Nunca público; se sirve a través del Worker, detrás de la autorización        |
 | IA                   | Workers AI (transcripción) y un modelo de lenguaje | Un único módulo llama al modelo (§4.3); la salida es datos que se validan, no instrucciones |
 | Pagos                | PayPal REST, sandbox                              | El Worker captura y verifica por sí mismo; el webhook es confirmación, no fuente |
@@ -96,7 +96,7 @@ test/       *.test.ts  helpers.ts  apply-migrations.ts
 
 - `interface Env` en `env.ts` es el único lugar que declara bindings, variables y secretos. Las variables numéricas se leen con un parser que falla cerrado ante basura.
 - Las dependencias externas (fetch al proveedor, reloj, modelo) entran por una `interface Deps` inyectada en el arranque, para que las pruebas las sustituyan sin mocks globales.
-- Versiones fijadas sin rango en `package.json`; lockfile versionado.
+- Dependencias de producción fijadas sin rango en `package.json` (medido: las 2); lockfile versionado. Las de desarrollo pueden llevar rango.
 
 ### 4.3 El modelo de lenguaje
 
@@ -119,7 +119,7 @@ Nunca cuerpos, tokens, nombres, correos ni teléfonos. Un error no manejado regi
 ### 5.1 D1
 
 - **Dinero `INTEGER` en centavos.** Nunca `REAL`, nunca texto con punto decimal. Los valores del proveedor se parsean como texto de dos decimales exactos y se rechaza cualquier otra forma.
-- **Toda columna de texto tiene `CHECK (length(...) <= N)`; todo enum, `CHECK (col IN (...))`; todo booleano, `INTEGER CHECK (col IN (0, 1))`.**
+- **Toda columna de texto NUEVA que llega del cliente lleva `CHECK (length(...) <= N)`; todo enum, `CHECK (col IN (...))`; todo booleano, `INTEGER CHECK (col IN (0, 1))`.** Medido 2026-11-03: en `0001`–`0002` hay 13 columnas de texto libre heredadas sin `CHECK` (p. ej. `assigned_to`, `escalation_reason`, `sku`, `unit`, `provider`, `created_by`; `raw` queda acotada por el 413 del webhook). Comando base: `grep -hnE '^\s+[a-z_]+ TEXT' migrations/*.sql | grep -vE 'CHECK|PRIMARY KEY|REFERENCES'`, descartando a mano ids, fechas ISO y columnas cuyo `CHECK` está en otra línea. No se corrigen editando la migración aplicada (§5.2): se añade el `CHECK` en una migración nueva cuando la columna se toque.
 - **Idempotencia por `UNIQUE`.** El id de evento del proveedor, la clave de petición y el id de cargo son únicos; el código hace `INSERT … ON CONFLICT DO NOTHING` y lee `changes()`; sólo si esta petición insertó la fila encadena los efectos (confirmar cita, enviar mensaje). Nunca «SELECT y luego INSERT».
 - **Append-only por trigger.** `BEFORE UPDATE` y `BEFORE DELETE` con `RAISE(ABORT, 'append-only')` en cargos, eventos de pago, líneas de factura, borradores, aprobaciones y liberaciones. El estado «actual» es una vista sobre el historial, no una columna que se sobreescribe.
 - **Un batch por efecto de negocio.** Lo que debe ser atómico (evento + cambio de estado + mensaje) va en un único `batch()`; no hay transacciones repartidas en dos peticiones.
@@ -185,7 +185,7 @@ Cuando dos barreras afirman el mismo hecho (comprobación en JavaScript + guarda
 
 ### 7.4 Sondas contra el sandbox (contrato E1–E7)
 
-Las seis sondas de R122 (§13.16) existen como pruebas locales con el proveedor sustituido (firma inválida, sin id de webhook, replay, monto distinto, moneda distinta, fallo transitorio) y se repiten como **smoke** contra el Worker desplegado y el sandbox del proveedor después de cada deploy. Estado medido: sondas locales presentes en `test/webhook.test.ts`; smoke en sandbox vivo pendiente de ejecución (no medido).
+Las seis sondas de R122 (§13.16) son: firma inválida, replay, monto alterado, moneda distinta, doble pago concurrente y fallo transitorio. Existen como pruebas locales con el proveedor sustituido y se repiten como **smoke** contra el Worker desplegado y el sandbox del proveedor después de cada deploy. Estado medido: las cinco primeras del lado del webhook en `test/webhook.test.ts` (que además cubre «sin id de webhook ⇒ 503», E2); la concurrencia en `test/report.test.ts` (dos entregas concurrentes del mismo evento liquidan una vez) y `test/approve.test.ts` (dos «Generar cobro» concurrentes ⇒ un cargo); smoke en sandbox vivo pendiente de ejecución (no medido).
 
 ## 8. Secretos y configuración
 
@@ -248,7 +248,7 @@ Cada regla tiene dueño único: vive aquí y en ningún otro archivo. Si otro do
 - **R8** — El host del proveedor de pagos es constante y sandbox; `PAYPAL_ENV !== "sandbox"` ⇒ 503 global. 🔴 enforced: `checks.sh` + test de app.
 - **R9** — Nada escrito por la IA llega al dueño sin un clic humano separado; la liberación es una fila append-only con PK = consulta y el mensaje se encadena a `changes() = 1`. 🔴 enforced: mutante «segundo clic envía de nuevo».
 - **R10** — Todo lo que la IA propone pasa por un validador sin modelo: subcadena literal, números presentes en la cita, rangos, ids conocidos. 🔴 enforced: mutantes de grounding y explicación.
-- **R11** — Logs sin PII: ids, enums, conteos, `errName`. Errores no manejados registran `routePath`. 🔴 enforced: `pii_guard.test.ts`.
+- **R11** — Logs sin PII: ids, enums, conteos, `errName`. 🔴 enforced: `pii_guard.test.ts`. Que los errores no manejados registren `routePath` y no la URL concreta es 🟡 review-gate: ninguna prueba toca `onError` (medido).
 - **R12** — Tokens del dueño: 256 bits, sólo SHA-256 en D1, expiran, 404 uniforme, `no-store` / `no-referrer` / `noindex`; nunca en logs. 🔴 enforced: tests de `report`.
 - **R13** — La receta nunca se gatea por pago; el reporte completo lee el ledger (`charges_current`), no un flag. 🔴 enforced: mutante «gate acepta cualquier status».
 - **R14** — Aprobar nunca llama al proveedor de pagos; el enlace de pago se crea después, idempotente, y se envía sólo si esta petición creó el cargo. 🔴 enforced: mutante «pay-link sin guarda».
@@ -286,7 +286,7 @@ Leyenda: 🔴 mecánico (un test, script o restricción lo hace fallar) · 🟡 
 | prueba                                           | qué hay hoy en el repo (medido)                                                                                   | regla que la hace pasar por diseño |
 | ------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------- | ---------------------------------- |
 | DAST pasivo                                      | No existe. Diseño: `secureHeaders()` global, CSP `'self'` en la consola, cabeceras `no-store`/`no-referrer`/`noindex` en enlaces del dueño | §11; R12                           |
-| Lógica de dinero (replay, firma, monto, carrera) | `test/webhook.test.ts` con proveedor sustituido: firma inválida, sin id, replay, monto distinto, moneda distinta, fallo transitorio; smoke en sandbox vivo pendiente (no medido) | R4, R5, R3; **R122**               |
+| Lógica de dinero (replay, firma, monto, carrera) | Proveedor sustituido: firma inválida, replay, monto alterado, moneda distinta y fallo transitorio en `test/webhook.test.ts`; doble pago concurrente en `test/report.test.ts` y `test/approve.test.ts`; smoke en sandbox vivo pendiente (no medido) | R4, R5, R3; **R122**               |
 | Cabeceras / TLS                                  | TLS lo da la plataforma; cabeceras por `secureHeaders()`; sin veredicto automatizado                              | §11                                |
 
 **Nivel 3 — pesadas, de organización** (no las pasa el código solo; el repo produce la evidencia)
@@ -300,11 +300,11 @@ Leyenda: 🔴 mecánico (un test, script o restricción lo hace fallar) · 🟡 
 
 #### (b) Reglas duras
 
-- **R118** — **Toda dependencia o runtime nuevo entra en el MISMO commit con lockfile y con el escaneo que le aplique (SAST, SCA, imagen) cuando exista en el repo; si no existe, el contrato lo declara «no medido» y la calificadora lo trata como hallazgo abierto, no como aprobado.** Un componente sin lockfile ni gate de CVE no es «experimental»: es inauditable. Medido 2026-11-03: lockfile presente, 0 escaneos automatizados. **Enforced by**: documentado 🔴 (candidato mecánico: un paso de `checks.sh` que exija lockfile actualizado y un escaneo SCA cuando se instale).
+- **R118** — **Toda dependencia o runtime nuevo entra en el MISMO commit con lockfile y con el escaneo que le aplique (SAST, SCA, imagen) cuando exista en el repo; si no existe, el contrato lo declara «no medido» y la calificadora lo trata como hallazgo abierto, no como aprobado.** Un componente sin lockfile ni gate de CVE no es «experimental»: es inauditable. Medido 2026-11-03: lockfile presente, 0 escaneos automatizados. **Enforced by**: review-gate 🟡 (candidato mecánico: un paso de `checks.sh` que exija lockfile actualizado y un escaneo SCA cuando se instale).
 - **R119** — **Todo endpoint público valida con schema CERRADO (`.strict()`) y contesta 4xx, nunca 5xx, a cualquier entrada; la autenticación y la configuración se comprueban ANTES de parsear el cuerpo.** Un fuzz que produce un 500 es defecto de la app, no ruido: cada 500 es un oráculo y un consumo de recursos antes de saber quién llama. Medido: 26 schemas `.strict()`, orden fijo en §6. **Enforced by**: review-gate 🟡 (candidato: un test que envíe cuerpos basura a cada ruta y exija 0 × 500).
 - **R120** — **Los invariantes de dinero y ledger (redondeo único, idempotencia, atomicidad, balance = SUM, total − depósito = saldo ≥ 0) se prueban por PROPIEDADES, no sólo por ejemplos.** Un generador de montos y secuencias afirma que el invariante se sostiene para cualquier entrada, incluidos los bordes que un ejemplo a mano no escribe (centavo impar, moneda distinta, replay fuera de orden). Medido: 0 tests por propiedades; cubierto parcialmente por ejemplos y mutantes (R20). **Enforced by**: review-gate 🟡; complementa R20.
 - **R121** — **Toda ruta que recibe un id o token de recurso tiene su test «credencial de A sobre el recurso de B ⇒ 403/404 y 0 filas», y toda acción con efectos (aprobar, cobrar, enviar, liberar) exige la credencial explícita en el handler.** Que la ruta esté detrás de una autenticación global no autoriza sobre el recurso concreto. Hoy el repo tiene un solo rol autenticado; la regla aplica desde el momento en que exista un segundo (otro veterinario, recepción) o un id de consulta llegue del cliente. **Enforced by**: review-gate 🟡; extiende R12, R17.
-- **R122** — **Todo webhook que mueve dinero trae, antes del primer deploy, su batería de seis sondas en el sandbox del proveedor, y las repite como smoke tras cada deploy; nunca contra producción real.** Las seis: firma inválida ⇒ 4xx y 0 filas; replay del mismo evento ⇒ 1 captura, 1 evento; monto alterado ⇒ nunca `captured`; moneda distinta ⇒ nunca `captured`; doble pago concurrente ⇒ 1 cargo; fallo transitorio al capturar ⇒ 5xx reintentable sin sellar el id del evento. Operacionaliza R3–R5 contra una instancia viva, que es donde fallan la configuración de llaves, la URL pública y el registro del webhook, cosas que ningún test local ve. Medido: sondas locales en `test/webhook.test.ts`; smoke en sandbox pendiente. **Enforced by**: review-gate 🟡.
+- **R122** — **Todo webhook que mueve dinero trae, antes del primer deploy, su batería de seis sondas en el sandbox del proveedor, y las repite como smoke tras cada deploy; nunca contra producción real.** Las seis: firma inválida ⇒ 4xx y 0 filas; replay del mismo evento ⇒ 1 captura, 1 evento; monto alterado ⇒ nunca `captured`; moneda distinta ⇒ nunca `captured`; doble pago concurrente ⇒ 1 cargo; fallo transitorio al capturar ⇒ 5xx reintentable sin sellar el id del evento. Operacionaliza R3–R5 contra una instancia viva, que es donde fallan la configuración de llaves, la URL pública y el registro del webhook, cosas que ningún test local ve. Medido: sondas locales repartidas como dice §7.4 (`webhook`, `report`, `approve`); smoke en sandbox pendiente. **Enforced by**: review-gate 🟡.
 
 #### (c) Checklist
 
