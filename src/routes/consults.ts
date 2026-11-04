@@ -6,6 +6,7 @@ import { Hono } from "hono";
 import { z } from "zod";
 import { ClaudeError } from "../agent/claude";
 import { doctorAuth } from "../auth";
+import { readCapped } from "../body";
 import { DraftRejectedError, fillConsult } from "../clinical/fill";
 import { redactOwner } from "../clinical/redact";
 import { labelSpeakers, type Speaker } from "../clinical/roles";
@@ -45,31 +46,6 @@ interface SegmentRow {
   end_ms: number;
   speaker: Speaker;
   text: string;
-}
-
-/** Reads the whole body with a hard cap; null when the stream exceeds it. */
-async function readCapped(body: ReadableStream<Uint8Array> | null, max: number): Promise<Uint8Array | null> {
-  if (!body) return new Uint8Array(0);
-  const reader = body.getReader();
-  const chunks: Uint8Array[] = [];
-  let total = 0;
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    total += value.byteLength;
-    if (total > max) {
-      await reader.cancel();
-      return null;
-    }
-    chunks.push(value);
-  }
-  const out = new Uint8Array(total);
-  let off = 0;
-  for (const ch of chunks) {
-    out.set(ch, off);
-    off += ch.byteLength;
-  }
-  return out;
 }
 
 export function consultsRoutes(deps: Deps) {
@@ -185,12 +161,17 @@ export function consultsRoutes(deps: Deps) {
     const estSeconds = Math.max(1, Math.ceil(audio.byteLength / AUDIO_BYTES_PER_SECOND));
     const cap = intVar(env.AUDIO_DAILY_SECONDS_CAP, 7200);
     const day = deps.now().toISOString().slice(0, 10);
+    // H5: an upload that can never fit is refused BEFORE reserving, so it burns no budget.
+    if (estSeconds > cap) {
+      log("audio_daily_cap_reached", { day, consult_id: id.data, reason: "over_cap" });
+      return c.json({ error: "daily transcription budget reached" }, 429);
+    }
     const reserved = await env.DB.prepare(
       `INSERT INTO audio_usage (day, audio_seconds) VALUES (?1, ?2)
        ON CONFLICT(day) DO UPDATE SET audio_seconds = audio_seconds + ?2 WHERE audio_seconds + ?2 <= ?3
        RETURNING audio_seconds`,
     ).bind(day, estSeconds, cap).first();
-    if (!reserved || estSeconds > cap) {
+    if (!reserved) {
       log("audio_daily_cap_reached", { day, consult_id: id.data });
       return c.json({ error: "daily transcription budget reached" }, 429);
     }
