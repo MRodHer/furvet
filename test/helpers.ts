@@ -129,4 +129,20 @@ export function assertNoPii(lines: string[]): void {
   }
 }
 
+/** Doctor Basic header for the test credential (vitest.config.ts). */
+export const DOCTOR_AUTH = { Authorization: `Basic ${btoa("doctor:test-doctor-pass")}` };
+
+/** A booking whose deposit was captured (appointment confirmed), owner consent optional. */
+export async function seedConfirmed(opts: { ownerConsent?: boolean } = {}) {
+  const b = await seedBooking();
+  await env.DB.batch([
+    env.DB.prepare("UPDATE appointments SET status = 'confirmed' WHERE id = ?1").bind(b.appt),
+    env.DB.prepare("UPDATE contacts SET name = 'Laura Demo', email = 'laura@example.com' WHERE id = ?1").bind(b.conv),
+    ...(opts.ownerConsent === false
+      ? []
+      : [env.DB.prepare("UPDATE conversations SET owner_consent_at = '2026-11-04T11:00:00.000Z', owner_consent_version = 'v1-2026-11-04' WHERE id = ?1").bind(b.conv)]),
+  ]);
+  return b;
+}
+
 export { PAYPAL_BASE };
