@@ -19,6 +19,7 @@ import { valueToCents } from "../money";
 import { errName, log } from "../log";
 
 const MAX_BODY_BYTES = 64 * 1024;
+export const DEPOSIT_CONFIRMED_TEXT = "¡Recibimos tu pago de anticipo! Tu cita quedó confirmada. 🐾";
 
 const EventSchema = z.object({
   id: z.string().min(1).max(100),
@@ -183,6 +184,10 @@ async function recordAndSettle(
   ];
   if (status === "captured" && charge.kind === "deposit" && charge.appointment_id) {
     stmts.push(env.DB.prepare("UPDATE appointments SET status = 'confirmed' WHERE id = ?1 AND status = 'pending_deposit' AND changes() = 1").bind(charge.appointment_id));
+    // The owner hears it in the chat only when THIS batch confirmed the appointment (changes() = 1 of the
+    // UPDATE above): a replay or a concurrent duplicate confirms nothing and says nothing. Fixed text, no
+    // payer data, no link. is_bot = 1 so the agent keeps answering (an is_bot = 0 outbound mutes it, E13).
+    if (charge.conversation_id) stmts.push(...messageInserts(env.DB, charge.conversation_id, DEPOSIT_CONFIRMED_TEXT, "changes() = 1", [], 1));
   }
   if (status === "captured" && charge.kind === "balance" && charge.consult_id && charge.conversation_id) {
     // The report link needs a clear token, which only exists at creation time → a fresh one per release.
@@ -191,7 +196,7 @@ async function recordAndSettle(
     const tokenLanded = (n: number) => `EXISTS (SELECT 1 FROM delivery_tokens WHERE token_sha256 = ?${n})`;
     stmts.push(
       tokenInsert(env.DB, hash, charge.consult_id, "report", new Date(), "changes() = 1"),
-      ...messageInserts(env.DB, charge.conversation_id, `Pago confirmado. Su informe completo está aquí: ${base}/r/${token}`, tokenLanded(3), hash),
+      ...messageInserts(env.DB, charge.conversation_id, `Pago confirmado. Su informe completo está aquí: ${base}/r/${token}`, tokenLanded(4), [hash]),
       env.DB.prepare(`UPDATE consults SET status = 'delivered' WHERE id = ?1 AND status = 'approved' AND ${tokenLanded(2)}`).bind(charge.consult_id, hash),
     );
   }

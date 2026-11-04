@@ -225,7 +225,7 @@ export function approveRoutes(deps: Deps, paypalFor: (env: Env) => PayPalClient 
       ),
       tokenInsert(db, rx.hash, consult.id, "rx", now, guard(5), approvalId),
       tokenInsert(db, report.hash, consult.id, "report", now, guard(5), approvalId),
-      ...messageInserts(db, consult.conversation_id, rxText, guard(3), approvalId),
+      ...messageInserts(db, consult.conversation_id, rxText, guard(4), [approvalId]),
       // balance 0 = the report is released right away, so the consult is already delivered.
       db.prepare(`UPDATE consults SET status = ?3 WHERE id = ?1 AND status NOT IN ('approved', 'delivered') AND ${guard(2)}`).bind(consult.id, approvalId, bill.balanceCents > 0 ? "approved" : "delivered"),
     ];

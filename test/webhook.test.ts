@@ -2,12 +2,14 @@ import { env } from "cloudflare:test";
 import { afterEach, describe, expect, it } from "vitest";
 import type { Env } from "../src/env";
 import { claimCharge } from "../src/ledger";
+import { DEPOSIT_CONFIRMED_TEXT } from "../src/routes/webhook";
 import {
   approvedEvent,
   assertNoPii,
   captureCompletedEvent,
   captureLogs,
   count,
+  json,
   makeApp,
   paypalFakes,
   PP,
@@ -29,7 +31,8 @@ async function seedDeposit(amountCents = 20000) {
   );
   const apptStatus = async () => (await env.DB.prepare("SELECT status FROM appointments WHERE id = ?1").bind(appt).first<{ status: string }>())?.status;
   const events = (where = "1=1") => count("charge_events", `charge_id = ?1 AND ${where}`, chargeId);
-  return { appt, chargeId, orderId, apptStatus, events };
+  const botMsgs = () => count("messages", "conversation_id = ?1 AND direction = 'outbound' AND is_bot = 1 AND text = ?2", conv, DEPOSIT_CONFIRMED_TEXT);
+  return { appt, conv, chargeId, orderId, apptStatus, events, botMsgs };
 }
 
 function post(app: ReturnType<typeof makeApp>["app"], body: unknown, e: Env = env, headers = webhookHeaders()) {
@@ -195,5 +198,64 @@ describe("PayPal webhook (E1-E4, E6, E14, D.1)", () => {
     const { app } = makeApp(paypalFakes());
     const res = await post(app, { id: "WH-12", event_type: "BILLING.SUBSCRIPTION.ACTIVATED", resource: {} });
     expect(await res.json()).toEqual({ status: "ignored" });
+  });
+
+  describe("deposit confirmation message (D1-D5)", () => {
+    const endTurn = (text: string) => () => json({ stop_reason: "end_turn", content: [{ type: "text", text }] });
+
+    it("D1: captured deposit → exactly one bot message with the fixed text; appointment confirmed; no PII logged", async () => {
+      const { chargeId, orderId, apptStatus, botMsgs, conv } = await seedDeposit();
+      const logs = captureLogs();
+      restore = logs.restore;
+      const { app } = makeApp(paypalFakes({ captureValue: "200.00" }));
+      expect(await (await post(app, approvedEvent("WH-D1", orderId, chargeId))).json()).toEqual({ status: "captured" });
+      expect(await apptStatus()).toBe("confirmed");
+      expect(await botMsgs()).toBe(1);
+      expect(await count("messages", "conversation_id = ?1 AND direction = 'outbound'", conv)).toBe(1);
+      assertNoPii(logs.lines);
+    });
+
+    it("D2: two concurrent deliveries of the same event, then a CAPTURE.COMPLETED for the same charge → still one message", async () => {
+      const { chargeId, orderId, botMsgs, events } = await seedDeposit();
+      const { app } = makeApp(paypalFakes({ captureValue: "200.00" }));
+      const ev = approvedEvent("WH-D2", orderId, chargeId);
+      const results = await Promise.all([post(app, ev), post(app, ev)]);
+      expect(results.map((r) => r.status)).toEqual([200, 200]);
+      expect(await events("status = 'captured'")).toBe(1);
+      expect(await botMsgs()).toBe(1);
+      expect(await (await post(app, captureCompletedEvent("WH-D2b", "CAP-D2", chargeId, "200.00", "MXN", orderId))).json()).toEqual({ status: "already_captured" });
+      expect(await (await post(app, ev)).json()).toEqual({ status: "duplicate" });
+      expect(await botMsgs()).toBe(1);
+    });
+
+    it("D3: amount or currency mismatch → no message, appointment stays pending", async () => {
+      const a = await seedDeposit();
+      const { app } = makeApp(paypalFakes({ captureValue: "200.01" }));
+      expect(await (await post(app, approvedEvent("WH-D3", a.orderId, a.chargeId))).json()).toEqual({ status: "amount_mismatch" });
+      expect(await a.botMsgs()).toBe(0);
+      expect(await a.apptStatus()).toBe("pending_deposit");
+      const b = await seedDeposit();
+      expect(await (await post(app, captureCompletedEvent("WH-D3b", "CAP-D3", b.chargeId, "200.00", "USD", b.orderId))).json()).toEqual({ status: "amount_mismatch" });
+      expect(await b.botMsgs()).toBe(0);
+    });
+
+    it("D4: a deposit charge without conversation_id captures and confirms without failing", async () => {
+      const { appt, conv } = await seedBooking();
+      const chargeId = crypto.randomUUID();
+      const orderId = `ORDER-${crypto.randomUUID()}`;
+      await claimCharge(env.DB, { id: chargeId, kind: "deposit", appointmentId: appt, paypalOrderId: orderId, paypalRequestId: `deposit-${appt}`, amountCents: 20000, currency: "MXN", approveUrl: "https://www.sandbox.paypal.com/x" }, {});
+      const { app } = makeApp(paypalFakes({ captureValue: "200.00" }));
+      expect(await (await post(app, approvedEvent("WH-D4", orderId, chargeId))).json()).toEqual({ status: "captured" });
+      expect((await env.DB.prepare("SELECT status FROM appointments WHERE id = ?1").bind(appt).first<{ status: string }>())?.status).toBe("confirmed");
+      expect(await count("messages", "conversation_id = ?1 AND text = ?2", conv, DEPOSIT_CONFIRMED_TEXT)).toBe(0);
+    });
+
+    it("D5: the confirmation is the BOT's message (is_bot = 1): the agent keeps answering the owner right after", async () => {
+      const { chargeId, orderId, conv } = await seedDeposit();
+      const { app } = makeApp({ ...paypalFakes({ captureValue: "200.00" }), [PP.claude]: endTurn("Te esperamos mañana.") });
+      expect(await (await post(app, approvedEvent("WH-D5", orderId, chargeId))).json()).toEqual({ status: "captured" });
+      const chat = await app.request("/api/v1/sim/chat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ session_id: conv, text: "¿a qué hora llego?" }) }, env);
+      expect(await chat.json()).toEqual({ reply: "Te esperamos mañana.", escalated: false });
+    });
   });
 });
