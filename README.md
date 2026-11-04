@@ -44,7 +44,7 @@ npx wrangler d1 execute furvet --local --file=seed.sql
 # set the clinic's prices (cents, tax included); the app refuses to charge a 0-priced item:
 npx wrangler d1 execute furvet --local --command "UPDATE catalog_items SET price_cents = 20000 WHERE sku = 'ANTICIPO-CONSULTA'"
 npm run dev                              # http://localhost:8787/sim.html and /cobros.html
-npm test                                 # static checks + 48 Vitest tests on a real local D1
+npm test                                 # static checks + 54 Vitest tests on a real local D1
 ```
 
 Deploy: `npx wrangler d1 create furvet` (paste the id into `wrangler.toml`), `npx wrangler secret put` for each secret listed in `wrangler.toml`, `npm run db:migrate:remote`, `npm run deploy`. Register the webhook URL `https://<worker>/api/v1/paypal/webhook` in the PayPal sandbox app with `CHECKOUT.ORDER.APPROVED`, `PAYMENT.CAPTURE.COMPLETED`, `PAYMENT.CAPTURE.DENIED`.
