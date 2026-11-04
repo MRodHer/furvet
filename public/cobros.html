@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline'; connect-src 'self'; form-action 'none'; base-uri 'none'">
+<title>FurVet — cobros (ledger)</title>
+<style>
+  body { margin:0; font-family: system-ui, sans-serif; color:#111827; background:#f9fafb; }
+  main { max-width: 1100px; margin: 0 auto; padding: 16px; }
+  h1 { font-size: 1.1rem; margin: 0 0 4px; }
+  .note { color:#6b7280; font-size:.85rem; margin-bottom: 12px; }
+  #grid { height: 70vh; }
+  #events { margin-top: 12px; font-size: .9rem; }
+  #events table { border-collapse: collapse; width: 100%; }
+  #events th, #events td { text-align:left; padding: 6px 8px; border-bottom: 1px solid #e5e7eb; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Cobros — libro append-only (PayPal sandbox)</h1>
+  <p class="note">Cada fila es un cargo; el estado es el último evento verificado por webhook. Sin datos del pagador. Selecciona una fila para ver su historial.</p>
+  <div id="grid" role="region" aria-label="Tabla de cobros"></div>
+  <section id="events" aria-live="polite"></section>
+</main>
+<script src="https://cdn.jsdelivr.net/npm/ag-grid-community@36.2.0/dist/ag-grid-community.min.js"
+        integrity="sha384-icvtRKM0YJJgeDhXnWY8UlF1PVBFd4K8Pj61la+vG+EU+awBeoP0xGPZhCD2SQOV"
+        crossorigin="anonymous"></script>
+<script src="/cobros.js"></script>
+</body>
+</html>

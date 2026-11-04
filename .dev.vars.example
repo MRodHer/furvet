@@ -1,0 +1,8 @@
+# Copy to .dev.vars for `wrangler dev`. Never commit .dev.vars. Sandbox credentials only.
+ANTHROPIC_API_KEY=
+PAYPAL_CLIENT_ID=
+PAYPAL_CLIENT_SECRET=
+PAYPAL_WEBHOOK_ID=
+DOCTOR_DEMO_USER=
+DOCTOR_DEMO_PASSWORD=
+PUBLIC_BASE_URL=http://localhost:8787

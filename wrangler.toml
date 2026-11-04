@@ -1,0 +1,38 @@
+name = "furvet"
+main = "src/index.ts"
+compatibility_date = "2026-08-15"
+compatibility_flags = ["nodejs_compat"]
+
+# Secrets (NEVER here; `npx wrangler secret put <NAME>`):
+#   ANTHROPIC_API_KEY
+#   PAYPAL_CLIENT_ID, PAYPAL_CLIENT_SECRET, PAYPAL_WEBHOOK_ID   (sandbox only)
+#   DOCTOR_DEMO_USER, DOCTOR_DEMO_PASSWORD
+# Local dev: copy .dev.vars.example to .dev.vars (gitignored).
+
+[[d1_databases]]
+binding = "DB"
+database_name = "furvet"
+database_id = "00000000-0000-0000-0000-000000000000" # replaced after `wrangler d1 create furvet`
+migrations_dir = "migrations"
+
+[[r2_buckets]]
+binding = "FILES"
+bucket_name = "furvet-files"
+
+[ai]
+binding = "AI"
+
+[assets]
+directory = "./public"
+
+[vars]
+# The app refuses every request unless this is exactly "sandbox" (fail-closed).
+PAYPAL_ENV = "sandbox"
+CURRENCY = "MXN"
+MAX_CHARGE_CENTS = "5000000"
+BOT_ENABLED = "true"
+SIM_DAILY_MESSAGE_CAP = "300"
+CLINIC_NAME = "FurVet demo clinic"
+
+[observability]
+enabled = true

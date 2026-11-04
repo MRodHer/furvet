@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; form-action 'none'; base-uri 'none'">
+<title>FurVet — chat demo</title>
+<style>
+  :root { --bg:#f3f4f6; --me:#dcf8c6; --bot:#fff; --ink:#111827; --muted:#6b7280; --accent:#0070ba; }
+  body { margin:0; font-family: system-ui, sans-serif; background:var(--bg); color:var(--ink); }
+  main { max-width: 560px; margin: 0 auto; padding: 16px; display:flex; flex-direction:column; min-height:100vh; box-sizing:border-box; }
+  h1 { font-size: 1.1rem; margin: 0 0 4px; }
+  .note { color: var(--muted); font-size: .85rem; margin-bottom: 12px; }
+  #log { flex:1; display:flex; flex-direction:column; gap:8px; overflow-y:auto; padding-bottom: 8px; }
+  .msg { max-width: 85%; padding: 8px 12px; border-radius: 12px; white-space: pre-wrap; word-break: break-word; line-height:1.35; }
+  .inbound { align-self:flex-end; background:var(--me); }
+  .outbound { align-self:flex-start; background:var(--bot); border:1px solid #e5e7eb; }
+  .msg a { color: var(--accent); font-weight: 600; }
+  form { display:flex; gap:8px; margin-top: 8px; }
+  input[type=text] { flex:1; padding:10px; border:1px solid #d1d5db; border-radius:8px; font-size:1rem; }
+  button { padding:10px 14px; border:0; border-radius:8px; background:var(--accent); color:#fff; font-size:1rem; cursor:pointer; }
+  button[disabled] { opacity:.5; cursor:not-allowed; }
+  #consent { background:#fff; border:1px solid #e5e7eb; border-radius:12px; padding:12px; margin: 8px 0; font-size:.9rem; }
+  #status { color: var(--muted); font-size:.85rem; min-height: 1.2em; }
+</style>
+</head>
+<body>
+<main>
+  <h1>FurVet — chat con la clínica (demo)</h1>
+  <p class="note">Simulador del chat. En producción esto es WhatsApp. Pagos en PayPal <strong>sandbox</strong>, sin dinero real.</p>
+  <div id="log" aria-live="polite" aria-label="Conversación"></div>
+  <section id="consent">
+    <label><input type="checkbox" id="consentBox"> Acepto que la consulta de mi mascota se grabe para generar el expediente. El audio se borra en cuanto se transcribe. (texto <code id="consentVersion"></code>)</label>
+    <div><button id="consentBtn" type="button" disabled>Registrar consentimiento</button> <span id="consentState"></span></div>
+  </section>
+  <form id="form">
+    <input type="text" id="text" maxlength="2000" placeholder="Escribe tu mensaje…" autocomplete="off" aria-label="Mensaje" required>
+    <button type="submit" id="send">Enviar</button>
+  </form>
+  <p id="status" role="status"></p>
+</main>
+<script src="/sim.js"></script>
+</body>
+</html>

@@ -11,3 +11,9 @@ dist/
 *.m4a
 *.webm
 .claude/
+
+# Cloudflare local
+.dev.vars
+.dev.vars.*
+!.dev.vars.example
+.wrangler/
