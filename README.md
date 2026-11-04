@@ -58,8 +58,13 @@ Deploy: `npx wrangler d1 create furvet` (paste the id into `wrangler.toml`), `np
 - **The model never sets a price.** Tool schemas have no money fields and reject extra keys; the deposit amount is read from the catalog; a 0-priced catalog refuses to charge and `/health` reports it.
 - **Agent guards.** The bot stays silent (never invents) when a person has the chat, when state is unreadable, when the key is missing, or when the model did not finish its turn. Owner text is data, not instructions.
 - **No PII in logs or on the board.** Logs carry ids, enums and error names; webhook payloads are stored without `payer`/`payment_source`; the board API never returns raw payloads.
-- **Mutation control.** `scripts/mutants.sh` injects four money/validation defects and requires the tests to go red.
-- Rate limiting per IP is configured at the Cloudflare edge (WAF rules), not in code; the app enforces a daily demo cap and a per-conversation cap.
+- **Treatment is never withheld for payment.** Approving a consult writes the bill snapshot, sends the prescription + urgent instructions to the owner's chat and creates the balance order in ONE D1 batch. `/rx/<token>` is never gated. `/r/<token>` (full report) answers 402 until the ledger view shows the balance `captured` (or the deposit covered everything) — the gate reads `charges_current`, not a flag.
+- **Prices come from the server.** The approved body carries catalog ids and quantities only (strict schema: a `precio`/`amount` key is a 422). Unit prices are copied from `catalog_items` at approval into append-only `bill_lines`; total − captured deposit = balance, in integer cents; the PayPal order lists the items with `item_total` and the deposit as `discount`.
+- **Owner links.** 256-bit tokens, only their SHA-256 in D1, 30-day expiry, uniform 404, `Cache-Control: no-store`, `Referrer-Policy: no-referrer`, `X-Robots-Tag: noindex`; tokens never appear in logs (errors log the route pattern, not the path).
+- **PDFs without decoding.** Reports are plain-text PDFs written by the Worker (Helvetica/WinAnsi, images embedded as-is): pdf-lib measured 30–60 ms per report in workerd and the Workers free plan allows 10 ms CPU per request. Images are accepted by byte signature only (JPEG/PNG), capped at 2 MB and 4 per consult, and their metadata segments (EXIF/GPS, text chunks) are dropped structurally before the R2 put.
+- **Plain-language explanation.** Claude receives only the approved values (no transcript, no prices); a validator rejects any number or dose absent from the approved JSON; one retry, then a fixed template without AI.
+- **Mutation control.** `scripts/mutants.sh` injects money/validation defects (webhook amount, ledger guard, money parser, deposit tool, bill arithmetic, report gate, explanation validator, image metadata, price key) and requires the tests to go red.
+- Rate limiting per IP (webhook, `/r/`, `/rx/`) is configured at the Cloudflare edge (WAF rules), not in code; the app enforces a daily demo cap and a per-conversation cap. A PayPal order is not a CFDI (Mexican tax invoice); prices are tax-included amounts set by the clinic.
 
 ## AI tools used
 
