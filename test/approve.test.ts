@@ -401,8 +401,15 @@ describe("bill breakdown, editable quantities and owner-sourced medications (BB1
     expect(await count("consult_bills", "consult_id = ?1", consult)).toBe(0);
     expect((await messages(conv)).results).toHaveLength(0);
 
-    const out = (await (await post(app, consult, body)).json()) as { lines: { name: string }[]; total_cents: number; balance_cents: number };
+    // An owner-sourced row still names a real, active catalog item (unknown ⇒ 422, nothing written).
+    body.prescription.push({ ...body.prescription[0], medicamento: doc("otro"), owner_sourced: true, catalog_item_id: "not-in-catalog" });
+    expect((await post(app, consult, body)).status).toBe(422);
+    expect(await count("consult_bills", "consult_id = ?1", consult)).toBe(0);
+    body.prescription.pop();
+
+    const out = (await (await post(app, consult, body)).json()) as { approval_id: string; lines: { name: string }[]; total_cents: number; balance_cents: number };
     expect(out.lines.map((l) => l.name)).toEqual(["Consulta general", "VAC-RABIA"]);
+    expect(await env.FILES.head(`reports/${out.approval_id}/rx.pdf`)).not.toBeNull();
     expect(out).toMatchObject({ total_cents: 83050, balance_cents: 63050 });
     expect(await count("bill_lines", "consult_id = ?1 AND catalog_item_id = ?2", consult, ids["MED-AMOXI"])).toBe(0);
     const rx = (await messages(conv)).results.map((m) => m.text).join("\n");

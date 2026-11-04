@@ -88,11 +88,14 @@ export function approveRoutes(deps: Deps, paypalFor: (env: Env) => PayPalClient 
     if (!consultItem) return { error: "catalog has no consultation item", status: 503 as const };
     wanted.unshift({ catalogItemId: consultItem.id, quantity: 1, source: "doctor_added" });
 
-    const ids = [...new Set(wanted.map((w) => w.catalogItemId))];
+    // Owner-sourced ids are validated too (unknown/inactive ⇒ 422, like any client id), just never priced.
+    const ownerSourced = body.prescription.flatMap((m) => (m.owner_sourced && m.catalog_item_id ? [m.catalog_item_id] : []));
+    const ids = [...new Set([...wanted.map((w) => w.catalogItemId), ...ownerSourced])];
     const { results: catalog } = await c.env.DB.prepare(`SELECT id, name, price_cents, active FROM catalog_items WHERE category <> 'anticipo' AND id IN (${ids.map((_, i) => `?${i + 1}`).join(",")})`)
       .bind(...ids)
       .all<CatalogRow>();
     const deposit = await currentCharge(c.env.DB, "appointment_id", consult.appointment_id);
+    if (ownerSourced.some((id) => !catalog.some((row) => row.id === id && row.active === 1))) return { error: "unknown catalog item", status: 422 as const };
     let bill: Bill;
     try {
       bill = computeBill(buildLines(wanted, catalog), deposit?.status === "captured" && deposit.currency === c.env.CURRENCY ? deposit.amount_cents : 0);

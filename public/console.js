@@ -238,10 +238,20 @@
     const cat = el("select", { id: `${kind}-cat-${i}` });
     cat.append(el("option", { value: "", textContent: "No cobrar / no está en catálogo" }));
     for (const c of catalog) cat.append(el("option", { value: c.id, textContent: `${c.name} (${c.category})`, selected: c.id === itemId }));
-    const draftQty = (lastDraftBillable.find((b) => b.catalog_item_id === itemId) || {}).quantity;
+    // A quantity the draft grounded is claimed by ONE block (never inherited twice); it loses its IA mark when edited or re-pointed.
+    const draftQty = itemId && !claimedQty.has(itemId) ? (lastDraftBillable.find((b) => b.catalog_item_id === itemId) || {}).quantity : undefined;
     const qty = el("input", { id: `${kind}-qty-${i}`, type: "number", min: "1", max: "100", step: "1", value: draftQty ? String(draftQty.value) : "1" });
-    if (draftQty) { qty.dataset.ai = JSON.stringify({ ...draftQty, source: "ai" }); qty.addEventListener("input", () => { delete qty.dataset.ai; }); }
-    row.append(el("label", { htmlFor: cat.id, textContent: "Concepto del catálogo" }), cat, el("label", { htmlFor: qty.id, textContent: "Cantidad a cobrar (1–100; el precio lo pone el catálogo del servidor)" }), qty);
+    const qtyLabel = el("label", { htmlFor: qty.id, textContent: "Cantidad a cobrar (1–100; el precio lo pone el catálogo del servidor)" });
+    if (draftQty) {
+      claimedQty.add(itemId);
+      qty.dataset.ai = JSON.stringify({ ...draftQty, source: "ai" });
+      const badge = el("span", { class: "badge", textContent: "IA", title: draftQty.quote });
+      qtyLabel.append(badge);
+      const own = () => { delete qty.dataset.ai; badge.remove(); };
+      qty.addEventListener("input", own);
+      cat.addEventListener("change", own);
+    }
+    row.append(el("label", { htmlFor: cat.id, textContent: "Concepto del catálogo" }), cat, qtyLabel, qty);
     if (ownerOption) {
       const own = el("input", { id: `${kind}-own-${i}`, type: "checkbox" });
       row.append(el("label", { htmlFor: own.id, class: "note" }, own, " El dueño lo consigue por su cuenta (no se cobra; la receta sí se emite)"));
@@ -261,6 +271,7 @@
     form.replaceChildren();
     const body = draft ? draft.body : { subjective: {}, vitals: {}, physical_exam: {}, assessment: {}, plan: {}, prescription: [], vaccines: [], billable: [] };
     lastDraftBillable = body.billable;
+    claimedQty.clear();
     for (const [sec, title, fields] of SECTIONS) {
       form.append(el("h3", { textContent: title }));
       for (const [k, label, kind] of fields) form.append(field(`${sec}.${k}`, label, kind || "text", body[sec][k]));
@@ -282,6 +293,10 @@
     form.append(addMed);
     form.append(el("h3", { textContent: "Vacunas aplicadas" }));
     body.vaccines.forEach((v, i) => form.append(el("div", { class: "vax" }, field(`vaccines[${i}].vacuna`, `Vacuna ${i + 1}`, "text", v.vacuna), catalogRow("vax", i, v.catalog_item_id, false))));
+    // Draft billable rows that no medication/vaccine block claimed (lab, deworming, other…): still billable, still editable.
+    const others = body.billable.filter((b) => !claimedQty.has(b.catalog_item_id));
+    if (others.length) form.append(el("h3", { textContent: "Otros conceptos a cobrar" }));
+    others.forEach((b, i) => form.append(el("div", { class: "oth" }, catalogRow("oth", i, b.catalog_item_id, false))));
     $("billPreview").replaceChildren();
     // Discarded panel: reason + quote, never pre-filled.
     const list = $("discarded");
@@ -333,12 +348,14 @@
     };
     document.querySelectorAll("#soap .med").forEach((_, i) => bill("med", i, out.prescription[i]));
     document.querySelectorAll("#soap .vax").forEach((_, i) => bill("vax", i, out.vaccines[i]));
+    document.querySelectorAll("#soap .oth").forEach((_, i) => bill("oth", i, {}));
     out.prescription = out.prescription.filter(Boolean);
     out.vaccines = out.vaccines.filter(Boolean);
     if (out.plan.urgent_instructions) out.plan.urgent_instructions = out.plan.urgent_instructions.filter(Boolean);
     return out;
   }
   let lastDraftBillable = [];
+  const claimedQty = new Set();
   $("previewBtn").addEventListener("click", async () => {
     $("previewState").textContent = "Calculando…";
     const { ok, status, data } = await api(`/${consultId}/bill-preview`, { method: "POST", body: JSON.stringify(collect()) });
