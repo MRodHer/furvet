@@ -136,7 +136,7 @@ export function ticketBlocks(h: ReportHeader, bill: Bill, currency: string): Blo
   return [...header(h, "Cuenta de la consulta"), { kind: "h2", text: "Conceptos" }, ...billTextLines(bill, currency).map((text) => ({ kind: "p" as const, text })), { kind: "small", text: `Estado: ${bill.balanceCents > 0 ? "saldo pendiente" : "sin saldo pendiente"}. Los precios incluyen impuestos y los fija la clínica; este documento no es un comprobante fiscal.` }];
 }
 
-/** Full report: SOAP, vitals, exam, vaccines, rx, plain explanation, images. */
+/** Full report: SOAP, vitals, exam, vaccines, plain explanation, images (never the rx). */
 /** `explanation` is null until the doctor releases it ("Enviar al dueño"): the section is then absent. */
 export function reportBlocks(body: ApprovedConsult, h: ReportHeader, explanation: string | null, images: { image: CleanImage; caption: string }[]): Block[] {
   const out: Block[] = [...header(h, "Informe de consulta")];
@@ -188,8 +188,7 @@ export function reportBlocks(body: ApprovedConsult, h: ReportHeader, explanation
     ["Indicaciones", v(p.instrucciones_cliente)],
   ]);
   section("Vacunas aplicadas", body.vaccines.map((x) => [v(x.vacuna) ?? "Vacuna", [v(x.lote) ? `lote ${v(x.lote)}` : null, v(x.fecha_proxima) ? `próxima ${v(x.fecha_proxima)}` : null].filter(Boolean).join(", ") || "aplicada"]));
-  const rx = prescriptionLines(body);
-  if (rx.length) out.push({ kind: "h2", text: "Receta" }, ...rx.map((text) => ({ kind: "p" as const, text })));
+  // No rx section here: the prescription is printed and signed by the doctor, never delivered to the owner (ADENDA 2).
   const urgent = urgentLines(body);
   if (urgent.length) out.push({ kind: "h2", text: "Indicaciones urgentes" }, ...urgent.map((text) => ({ kind: "p" as const, text: `• ${text}` })));
   if (images.length) out.push({ kind: "h2", text: "Imágenes" }, ...images.map((im) => ({ kind: "image" as const, ...im })));

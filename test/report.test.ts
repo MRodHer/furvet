@@ -61,6 +61,10 @@ describe("owner links /rx and /r (V10-V13, D.6)", () => {
       const r = await t.get(url);
       expect(r.status, url).toBe(200);
       expect(r.headers.get("content-type")).toBe("application/pdf");
+      // ADENDA 2: the owner's report never carries the rx section or its numbered medication lines.
+      const text = new TextDecoder("latin1").decode(await r.arrayBuffer());
+      expect(text).toContain("Informe de consulta");
+      expect(text).not.toMatch(/\(Receta\)|1\. amoxicilina/);
     }
     expect((await env.DB.prepare("SELECT status FROM consults WHERE id = ?1").bind(t.consult).first<{ status: string }>())?.status).toBe("delivered");
     const replay = await t.webhook(approvedEvent("WH-R1", t.charge.paypal_order_id, t.charge.id));
