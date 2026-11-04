@@ -1,6 +1,8 @@
-# <Product name> — AI consult assistant for veterinarians, paid with PayPal
+# FurVet — the AI assistant for the vet visit
 
-> Working title. Built for the PayPal AI Hackathon 2026. Runs 100% in PayPal **sandbox**.
+*Because every patient is someone's fur bestie.* Vets subscribe with PayPal; families pay with PayPal.
+
+> Built for the PayPal AI Hackathon 2026. Runs 100% in PayPal **sandbox**.
 > Status: early skeleton — features below are the plan, not yet implemented.
 
 **Live demo:** `<URL>` · **Video:** `<YouTube URL>`
