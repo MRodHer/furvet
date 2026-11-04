@@ -141,9 +141,17 @@ export function captureLogs() {
   return { lines, restore: () => (console.log = orig) };
 }
 
+const UUID = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
+
+/**
+ * Heuristics for PII: an email, a phone-length digit run, or PayPal's payer object.
+ * Ids are UUIDs and about 1.6% of random UUIDs contain 10+ consecutive digits, so
+ * they are removed before the phone heuristic (that was the intermittent failure).
+ */
 export function assertNoPii(lines: string[]): void {
   for (const l of lines) {
-    if (/@/.test(l) || /\d{10,}/.test(l) || /payer/i.test(l)) throw new Error(`PII-looking log line: ${l}`);
+    const noIds = l.replace(UUID, "");
+    if (/@/.test(noIds) || /\d{10,}/.test(noIds) || /payer/i.test(noIds)) throw new Error(`PII-looking log line: ${l}`);
   }
 }
 
