@@ -2,7 +2,7 @@ import { env } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
 import { cleanImage, ImageError } from "../src/images";
 import { buildPdf } from "../src/reports/pdf";
-import { doctorEnv, doctorHeaders, fakeJpeg, makeApp, multipart, paypalFakes, seedConsult, withEnv } from "./helpers";
+import { count, doctorEnv, doctorHeaders, fakeJpeg, makeApp, multipart, paypalFakes, seedConsult, withEnv } from "./helpers";
 
 const ascii = (b: Uint8Array) => new TextDecoder("latin1").decode(b);
 
@@ -81,7 +81,10 @@ describe("images (V15, D.6)", () => {
     const obj = await env.FILES.get(stored.results[0]!.r2_key);
     expect(ascii(new Uint8Array(await obj!.arrayBuffer()))).not.toContain("Exif");
 
-    await env.DB.prepare("INSERT INTO consult_bills (consult_id, approval_id, total_cents, deposit_cents, balance_cents, approved_by) VALUES (?1, ?2, 1, 0, 1, 'val')").bind(consult, crypto.randomUUID()).run();
-    expect((await post(multipart(fakeJpeg(), "late.jpg"))).status).toBe(409);
+    // After approval: a consult with 0 images (so the 409 comes from the bill, not from the position UNIQUE).
+    const approved = await seedConsult();
+    await env.DB.prepare("INSERT INTO consult_bills (consult_id, approval_id, total_cents, deposit_cents, balance_cents, approved_by) VALUES (?1, ?2, 1, 0, 1, 'val')").bind(approved.consult, crypto.randomUUID()).run();
+    expect((await app.request(`/api/v1/consults/${approved.consult}/images`, { method: "POST", headers: doctorHeaders(), body: multipart(fakeJpeg(), "late.jpg") }, doctorEnv())).status).toBe(409);
+    expect(await count("report_images", "consult_id = ?1", approved.consult)).toBe(0);
   });
 });

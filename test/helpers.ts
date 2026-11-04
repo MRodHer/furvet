@@ -216,13 +216,22 @@ export function approvedBody(ids: Record<string, string>, extra: Record<string, 
   };
 }
 
-export async function depositCaptured(appt: string, amountCents = 20000) {
+/** A deposit charge in the ledger; by default captured in MXN. `status`/`currency` model an unpaid or foreign deposit (M1). */
+export async function depositCaptured(appt: string, amountCents = 20000, opts: { status?: string; currency?: string } = {}) {
   const chargeId = crypto.randomUUID();
+  const status = opts.status ?? "captured";
+  const currency = opts.currency ?? "MXN";
   await env.DB.batch([
     env.DB.prepare(
-      "INSERT INTO charges (id, kind, appointment_id, paypal_order_id, paypal_request_id, amount_cents, currency, approve_url) VALUES (?1, 'deposit', ?2, ?3, ?4, ?5, 'MXN', 'https://www.sandbox.paypal.com/x')",
-    ).bind(chargeId, appt, `ORDER-${chargeId}`, `deposit-${appt}`, amountCents),
-    env.DB.prepare("INSERT INTO charge_events (charge_id, status, paypal_capture_id, amount_cents, currency, raw) VALUES (?1, 'captured', ?2, ?3, 'MXN', '{}')").bind(chargeId, `CAP-${chargeId}`, amountCents),
+      "INSERT INTO charges (id, kind, appointment_id, paypal_order_id, paypal_request_id, amount_cents, currency, approve_url) VALUES (?1, 'deposit', ?2, ?3, ?4, ?5, ?6, 'https://www.sandbox.paypal.com/x')",
+    ).bind(chargeId, appt, `ORDER-${chargeId}`, `deposit-${appt}`, amountCents, currency),
+    env.DB.prepare("INSERT INTO charge_events (charge_id, status, paypal_capture_id, amount_cents, currency, raw) VALUES (?1, ?4, ?2, ?3, ?5, '{}')").bind(
+      chargeId,
+      status === "captured" ? `CAP-${chargeId}` : null,
+      amountCents,
+      status,
+      currency,
+    ),
   ]);
   return chargeId;
 }

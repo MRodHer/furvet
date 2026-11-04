@@ -1,5 +1,6 @@
 import { env } from "cloudflare:test";
 import { afterEach, describe, expect, it } from "vitest";
+import { makePayPal, PayPalError } from "../src/paypal";
 import { approvedBody, assertNoPii, captureLogs, claudeToolFake, count, depositCaptured, doctorEnv, doctorHeaders, makeApp, paypalFakes, PP, seedConsult, uniqueOrderFake, withEnv } from "./helpers";
 
 const fakes = () => ({ ...paypalFakes(), ...uniqueOrderFake, ...claudeToolFake(["Su perro tiene gastroenteritis leve; amoxicilina 250 mg cada 12 h por 7 días."]) });
@@ -115,7 +116,7 @@ describe("POST /approve (V7-C, V8, V9, D.4)", () => {
   });
 
   it("B2: a retried approval reuses the SAME charge id as custom_id (PayPal returns the first order for the same Request-Id)", async () => {
-    const { consult, ids } = await seedConsult();
+    const { consult, conv, ids } = await seedConsult();
     const { app, calls } = makeApp(fakes());
     const [a, b] = await Promise.all([post(app, consult, approvedBody(ids)), post(app, consult, approvedBody(ids))]);
     expect([a.status, b.status].sort()).toEqual([201, 409]);
@@ -125,6 +126,43 @@ describe("POST /approve (V7-C, V8, V9, D.4)", () => {
     expect(charge?.id).toBe(customIds[0]);
     expect(await count("consult_bills", "consult_id = ?1", consult)).toBe(1);
     expect(await count("delivery_tokens", "consult_id = ?1", consult)).toBe(2);
+    // M2: the loser of the race writes NO lines (append-only: duplicates would be permanent) and NO second rx message.
+    expect(await count("bill_lines", "consult_id = ?1", consult)).toBe(3);
+    expect(await count("messages", "conversation_id = ?1 AND direction = 'outbound'", conv)).toBe(1);
+  });
+
+  it("M1: a deposit that is not captured, or captured in another currency, is NOT discounted", async () => {
+    const full = 45000 + 38050 + 12525;
+    const created = await seedConsult();
+    await depositCaptured(created.appt, 20000, { status: "created" });
+    const { app } = makeApp(fakes());
+    const res = await post(app, created.consult, approvedBody(created.ids));
+    expect(res.status).toBe(201);
+    expect(await res.json()).toMatchObject({ total_cents: full, deposit_cents: 0, balance_cents: full });
+
+    const usd = await seedConsult();
+    await depositCaptured(usd.appt, 20000, { currency: "USD" });
+    const preview = await app.request(`/api/v1/consults/${usd.consult}/bill-preview`, { method: "POST", headers: doctorHeaders({ "Content-Type": "application/json" }), body: JSON.stringify(approvedBody(usd.ids)) }, doctorEnv());
+    expect(await preview.json()).toMatchObject({ deposit_cents: 0, balance_cents: full });
+  });
+
+  it("balance over MAX_CHARGE_CENTS → 422 before any write or PayPal call", async () => {
+    const { consult, conv, ids } = await seedConsult();
+    const { app, calls } = makeApp(fakes());
+    const res = await post(app, consult, approvedBody(ids), doctorEnv({ MAX_CHARGE_CENTS: "1000" }));
+    expect(res.status).toBe(422);
+    expect((await messages(conv)).results).toHaveLength(0);
+    expect(await count("consult_bills", "consult_id = ?1", consult)).toBe(0);
+    expect(calls.filter((c) => c.key === PP.orders)).toHaveLength(0);
+  });
+
+  it("createOrder refuses items whose total minus discount is not the amount (self-check)", async () => {
+    const { fetchImpl, calls } = makeApp(fakes());
+    const pp = makePayPal(fetchImpl, { clientId: "id", clientSecret: "s" });
+    const base = { currency: "MXN", customId: "balance-x", requestId: "balance-x", description: "d", returnUrl: "https://furvet.test/r", cancelUrl: "https://furvet.test/c", items: [{ name: "a", quantity: 2, unitCents: 100 }] };
+    await expect(pp.createOrder({ ...base, amountCents: 150, discountCents: 20 })).rejects.toThrow(PayPalError);
+    await expect(pp.createOrder({ ...base, amountCents: 250 })).rejects.toThrow(/item_total - discount/);
+    expect(calls).toHaveLength(0);
   });
 
   it("m2: an item present in billable AND mapped from the prescription is billed once", async () => {
@@ -159,12 +197,18 @@ describe("POST /approve (V7-C, V8, V9, D.4)", () => {
     expect((await env.DB.prepare("SELECT status FROM consults WHERE id = ?1").bind(consult).first<{ status: string }>())?.status).toBe("delivered");
   });
 
-  it("fail-closed: balance > 0 without PayPal configured → 503 before any write", async () => {
+  it("fail-closed: balance > 0 without PayPal, or any balance without PUBLIC_BASE_URL → 503 before any write", async () => {
     const { consult, conv, ids } = await seedConsult();
     const { app } = makeApp(fakes());
-    const res = await post(app, consult, approvedBody(ids), doctorEnv({ PAYPAL_CLIENT_ID: "" }));
-    expect(res.status).toBe(503);
+    expect((await post(app, consult, approvedBody(ids), doctorEnv({ PAYPAL_CLIENT_ID: "" }))).status).toBe(503);
     expect((await messages(conv)).results).toHaveLength(0);
     expect(await count("consult_bills", "consult_id = ?1", consult)).toBe(0);
+
+    // Balance 0 never calls PayPal, but the owner links must still be absolute.
+    const paid = await seedConsult({ depositCents: 200000 });
+    await depositCaptured(paid.appt, 200000);
+    expect((await post(app, paid.consult, approvedBody(paid.ids), doctorEnv({ PUBLIC_BASE_URL: undefined }))).status).toBe(503);
+    expect((await messages(paid.conv)).results).toHaveLength(0);
+    expect(await count("consult_bills", "consult_id = ?1", paid.consult)).toBe(0);
   });
 });

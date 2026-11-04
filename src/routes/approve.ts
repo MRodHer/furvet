@@ -149,11 +149,12 @@ export function approveRoutes(deps: Deps, paypalFor: (env: Env) => PayPalClient 
     const { body, bill, raw } = p;
     const paypal = paypalFor(env);
     if (bill.balanceCents > intVar(env.MAX_CHARGE_CENTS, 0)) return c.json({ error: "balance over cap" }, 422);
-    if (bill.balanceCents > 0 && (!paypal || !env.PUBLIC_BASE_URL)) {
+    // Owner links must be absolute even when the balance is 0, so the base URL is required always.
+    if (!env.PUBLIC_BASE_URL || (bill.balanceCents > 0 && !paypal)) {
       log("charge_refused", { reason: "paypal_not_configured", consult_id: consult.id });
       return c.json({ error: "payments not configured" }, 503);
     }
-    const base = env.PUBLIC_BASE_URL ?? "";
+    const base = env.PUBLIC_BASE_URL;
     const now = deps.now();
     const approvalId = crypto.randomUUID();
     const rx = await newToken();
