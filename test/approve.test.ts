@@ -1,5 +1,6 @@
 import { env } from "cloudflare:test";
 import { afterEach, describe, expect, it } from "vitest";
+import { ApprovedConsult, ConsultDraft, FILL_CONSULT_TOOL } from "../src/clinical/schema";
 import { makePayPal, PayPalError } from "../src/paypal";
 import { approvedBody, assertNoPii, captureLogs, claudeToolFake, count, depositCaptured, doctorEnv, doctorHeaders, makeApp, paypalFakes, PP, seedConsult, uniqueOrderFake, withEnv } from "./helpers";
 
@@ -346,5 +347,108 @@ describe("«Enviar al dueño» (second approval of the AI explanation)", () => {
     const { app } = makeApp(fakes());
     expect((await sendExplanation(app, consult)).status).toBe(409);
     expect((await messages(conv)).results).toHaveLength(0);
+  });
+});
+
+describe("bill breakdown, editable quantities and owner-sourced medications (BB1–BB4)", () => {
+  const doc = (value: unknown) => ({ value, source: "doctor" });
+  const preview = (app: ReturnType<typeof makeApp>["app"], consult: string, body: unknown) =>
+    app.request(`/api/v1/consults/${consult}/bill-preview`, { method: "POST", headers: doctorHeaders({ "Content-Type": "application/json" }), body: JSON.stringify(body) }, doctorEnv());
+  const delivery = (app: ReturnType<typeof makeApp>["app"], consult: string) => app.request(`/api/v1/consults/${consult}/delivery`, { headers: doctorHeaders() }, doctorEnv());
+  const expectedLines = [
+    { catalog_item_id: expect.any(String), name: "Consulta general", quantity: 1, unit_price: "$450.00 MXN", line_total_cents: 45000, source: "doctor_added" },
+    { catalog_item_id: expect.any(String), name: "MED-AMOXI", quantity: 1, unit_price: "$125.25 MXN", line_total_cents: 12525, source: "ai_detected" },
+    { catalog_item_id: expect.any(String), name: "VAC-RABIA", quantity: 1, unit_price: "$380.50 MXN", line_total_cents: 38050, source: "doctor_added" },
+  ];
+
+  it("BB1: consult + 1 medication + 1 vaccine → preview and /delivery list the 3 lines; total = Σ subtotals; balance = total − captured deposit", async () => {
+    const { consult, appt, ids } = await seedConsult();
+    await depositCaptured(appt, 20000);
+    const { app } = makeApp(fakes());
+    const pv = (await (await preview(app, consult, approvedBody(ids))).json()) as Record<string, unknown>;
+    expect(pv).toEqual({ lines: expectedLines, total_cents: 95575, deposit_cents: 20000, balance_cents: 75575 });
+    expect(await count("bill_lines", "consult_id = ?1", consult)).toBe(0);
+    expect((await post(app, consult, approvedBody(ids))).status).toBe(201);
+    const dl = (await (await delivery(app, consult)).json()) as Record<string, unknown>;
+    expect(dl).toMatchObject({ approved: true, lines: expectedLines, total_cents: 95575, deposit_cents: 20000, balance_cents: 75575 });
+    expect(dl.lines).toEqual(pv.lines); // what the console shows after a reload is the snapshot, field by field
+    expect(await count("bill_lines", "consult_id = ?1", consult)).toBe(3);
+  });
+
+  it("BB2: a quantity the doctor typed (14) → subtotal 14 × unit price, source doctor_added", async () => {
+    const { consult, appt, ids } = await seedConsult();
+    await depositCaptured(appt, 20000);
+    const { app } = makeApp(fakes());
+    const body = approvedBody(ids, { billable: [{ catalog_item_id: ids["MED-AMOXI"], quantity: doc(14) }] });
+    const out = (await (await post(app, consult, body)).json()) as { lines: Record<string, unknown>[]; total_cents: number; balance_cents: number };
+    expect(out.lines[1]).toEqual({ catalog_item_id: ids["MED-AMOXI"], name: "MED-AMOXI", quantity: 14, unit_price: "$125.25 MXN", line_total_cents: 175350, source: "doctor_added" });
+    expect(out.total_cents).toBe(45000 + 175350 + 38050);
+    expect(out.balance_cents).toBe(out.total_cents - 20000);
+    const row = await env.DB.prepare("SELECT quantity, line_total_cents, source FROM bill_lines WHERE consult_id = ?1 AND catalog_item_id = ?2").bind(consult, ids["MED-AMOXI"]).first();
+    expect(row).toEqual({ quantity: 14, line_total_cents: 175350, source: "doctor_added" });
+  });
+
+  it("BB3: owner-sourced medication → prescribed to the owner, absent from bill_lines, total/balance drop, the order charges that exact balance; the flag stays in the approved body", async () => {
+    const { consult, conv, appt, ids } = await seedConsult();
+    await depositCaptured(appt, 20000);
+    const { app, calls } = makeApp(fakes());
+    const body = approvedBody(ids, { billable: [] });
+    body.prescription[0] = { ...body.prescription[0], owner_sourced: true };
+    // The console never sends a billable row for an excluded medication; a forged one is refused, nothing written.
+    const forged = (await post(app, consult, { ...body, billable: [{ catalog_item_id: ids["MED-AMOXI"], quantity: doc(1) }] })) as Response;
+    expect(forged.status).toBe(422);
+    expect(await forged.json()).toEqual({ error: "owner-sourced item billed", status: 422 });
+    expect(await count("consult_bills", "consult_id = ?1", consult)).toBe(0);
+    expect((await messages(conv)).results).toHaveLength(0);
+
+    const out = (await (await post(app, consult, body)).json()) as { lines: { name: string }[]; total_cents: number; balance_cents: number };
+    expect(out.lines.map((l) => l.name)).toEqual(["Consulta general", "VAC-RABIA"]);
+    expect(out).toMatchObject({ total_cents: 83050, balance_cents: 63050 });
+    expect(await count("bill_lines", "consult_id = ?1 AND catalog_item_id = ?2", consult, ids["MED-AMOXI"])).toBe(0);
+    const rx = (await messages(conv)).results.map((m) => m.text).join("\n");
+    expect(rx).toContain("amoxicilina · 250 mg · cada 12 h · 7 días");
+    const version = await env.DB.prepare("SELECT body FROM consult_versions WHERE consult_id = ?1 AND kind = 'approved'").bind(consult).first<{ body: string }>();
+    expect(JSON.parse(version!.body).prescription[0].owner_sourced).toBe(true);
+    expect((await charge(app, consult)).status).toBe(201);
+    const order = JSON.parse(calls.find((c) => c.key === PP.orders)!.body);
+    expect(order.purchase_units[0].amount).toMatchObject({ currency_code: "MXN", value: "630.50" });
+    expect(order.purchase_units[0].items.map((i: { name: string }) => i.name)).toEqual(["Consulta general", "VAC-RABIA"]);
+  });
+
+  it("BB3b: the same catalog item excluded on one row and sold on another is billed once (the sold row wins)", async () => {
+    const { consult, ids } = await seedConsult();
+    const { app } = makeApp(fakes());
+    const body = approvedBody(ids, { billable: [] });
+    body.prescription = [{ ...body.prescription[0], owner_sourced: true }, { ...body.prescription[0], medicamento: doc("amoxicilina (segunda caja)") }];
+    const out = (await (await preview(app, consult, body)).json()) as { lines: { name: string; quantity: number }[] };
+    expect(out.lines.map((l) => [l.name, l.quantity])).toEqual([["Consulta general", 1], ["MED-AMOXI", 1], ["VAC-RABIA", 1]]);
+  });
+
+  it("BB5/R6: the model's schema (ConsultDraft) rejects owner_sourced; only the approved schema accepts it", () => {
+    const med = { medicamento: { value: "amoxicilina", segment_ids: [1], quote: "amoxicilina" }, owner_sourced: true };
+    const empty = { subjective: {}, vitals: {}, physical_exam: {}, assessment: {}, plan: {}, vaccines: [], billable: [] };
+    expect(ConsultDraft.safeParse({ ...empty, prescription: [med] }).success).toBe(false);
+    expect(ApprovedConsult.safeParse({ ...empty, prescription: [{ ...med, medicamento: { ...med.medicamento, source: "ai" } }] }).success).toBe(true);
+    expect(FILL_CONSULT_TOOL.input_schema && JSON.stringify(FILL_CONSULT_TOOL.input_schema)).not.toContain("owner_sourced");
+  });
+
+  it("BB4: quantity 0 / 101 / 1.5, unknown id, non-boolean flag → 422 and nothing written", async () => {
+    const { consult, conv, ids } = await seedConsult();
+    const { app, calls } = makeApp(fakes());
+    const bad = [
+      ...[0, 101, 1.5].map((q) => approvedBody(ids, { billable: [{ catalog_item_id: ids["MED-AMOXI"], quantity: doc(q) }] })),
+      approvedBody(ids, { billable: [{ catalog_item_id: "not-in-catalog", quantity: doc(1) }] }),
+    ];
+    const flagged = approvedBody(ids);
+    flagged.prescription[0] = { ...flagged.prescription[0], owner_sourced: "sí" };
+    bad.push(flagged);
+    for (const body of bad) {
+      expect((await preview(app, consult, body)).status).toBe(422);
+      expect((await post(app, consult, body)).status).toBe(422);
+    }
+    expect(await count("consult_bills", "consult_id = ?1", consult)).toBe(0);
+    expect(await count("bill_lines", "consult_id = ?1", consult)).toBe(0);
+    expect((await messages(conv)).results).toHaveLength(0);
+    expect(calls.length).toBe(0);
   });
 });

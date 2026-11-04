@@ -109,7 +109,7 @@
     const sent = !!data.explanation_sent_at;
     $("sendExplainBtn").disabled = sent;
     $("sendExplainState").textContent = sent ? `Enviada el ${new Date(data.explanation_sent_at).toLocaleString("es-MX")}.` : "Aún no enviada.";
-    $("billLine").textContent = `Total ${money(data.total_cents)} − anticipo ${money(data.deposit_cents)} = saldo ${money(data.balance_cents)}`;
+    renderBill($("billTable"), data);
     const charged = !!data.charge;
     $("chargeBtn").disabled = charged || data.balance_cents === 0;
     $("chargeState").textContent = data.balance_cents === 0 ? "Sin saldo: informe ya liberado." : charged ? `Liga enviada al dueño (estado: ${data.charge.status}).` : "La liga de pago aún no se ha generado.";
@@ -227,12 +227,34 @@
     if (incomplete) box.append(el("p", { class: "warn", textContent: `Incompleto (falta ${incomplete.missing.join(", ")} con número y unidad dichos en consulta): bloquea la aprobación hasta completarlo.` }));
     const grid = el("div", { class: "grid2" });
     for (const [k, label] of MED_FIELDS) grid.append(field(`prescription[${i}].${k}`, label, "text", m[k]));
-    const cat = el("select", { id: `med-cat-${i}` });
-    cat.append(el("option", { value: "", textContent: "No cobrar / no está en catálogo" }));
-    for (const c of catalog) cat.append(el("option", { value: c.id, textContent: `${c.name} (${c.category})`, selected: c.id === m.catalog_item_id }));
-    grid.append(el("div", { class: "field" }, el("label", { htmlFor: `med-cat-${i}`, textContent: "Concepto del catálogo" }), cat));
+    grid.append(catalogRow("med", i, m.catalog_item_id, true));
     box.append(grid);
     return box;
+  }
+  // Catalog concept + quantity to bill (the server prices it; 1–100 as in buildLines). Medications also get
+  // «the owner buys it elsewhere»: prescribed, never billed. A quantity the draft grounded keeps its IA mark until edited.
+  function catalogRow(kind, i, itemId, ownerOption) {
+    const row = el("div", { class: "field" });
+    const cat = el("select", { id: `${kind}-cat-${i}` });
+    cat.append(el("option", { value: "", textContent: "No cobrar / no está en catálogo" }));
+    for (const c of catalog) cat.append(el("option", { value: c.id, textContent: `${c.name} (${c.category})`, selected: c.id === itemId }));
+    const draftQty = (lastDraftBillable.find((b) => b.catalog_item_id === itemId) || {}).quantity;
+    const qty = el("input", { id: `${kind}-qty-${i}`, type: "number", min: "1", max: "100", step: "1", value: draftQty ? String(draftQty.value) : "1" });
+    if (draftQty) { qty.dataset.ai = JSON.stringify({ ...draftQty, source: "ai" }); qty.addEventListener("input", () => { delete qty.dataset.ai; }); }
+    row.append(el("label", { htmlFor: cat.id, textContent: "Concepto del catálogo" }), cat, el("label", { htmlFor: qty.id, textContent: "Cantidad a cobrar (1–100; el precio lo pone el catálogo del servidor)" }), qty);
+    if (ownerOption) {
+      const own = el("input", { id: `${kind}-own-${i}`, type: "checkbox" });
+      row.append(el("label", { htmlFor: own.id, class: "note" }, own, " El dueño lo consigue por su cuenta (no se cobra; la receta sí se emite)"));
+    }
+    return row;
+  }
+  // Breakdown table: what the server priced (preview) or what it snapshotted (after approval). Never computed here.
+  function renderBill(table, data) {
+    table.replaceChildren(el("tr", {}, ...["Concepto", "Cantidad", "Precio unitario", "Subtotal"].map((t) => el("th", { textContent: t }))));
+    for (const l of data.lines) table.append(el("tr", {}, el("td", { textContent: l.name }), el("td", { textContent: String(l.quantity) }), el("td", { textContent: l.unit_price }), el("td", { textContent: money(l.line_total_cents) })));
+    for (const [label, text] of [["Total", money(data.total_cents)], ["Anticipo capturado", `− ${money(data.deposit_cents)}`], ["Saldo a cobrar", money(data.balance_cents)]]) {
+      table.append(el("tr", {}, el("th", { textContent: label, colSpan: 3 }), el("td", { textContent: text })));
+    }
   }
   function renderDraft(draft) {
     const form = $("soap");
@@ -259,12 +281,8 @@
     addMed.addEventListener("click", () => addMed.before(medBlock(form.querySelectorAll(".med").length, {}, null)));
     form.append(addMed);
     form.append(el("h3", { textContent: "Vacunas aplicadas" }));
-    body.vaccines.forEach((v, i) => form.append(field(`vaccines[${i}].vacuna`, `Vacuna ${i + 1}`, "text", v.vacuna)));
-    form.append(el("h3", { textContent: "Conceptos a cobrar (cantidad; el precio lo pone el catálogo del servidor)" }));
-    body.billable.forEach((b, i) => {
-      const item = catalog.find((c) => c.id === b.catalog_item_id);
-      form.append(field(`billable[${i}].quantity`, `${item ? item.name : b.catalog_item_id} × cantidad`, "num", b.quantity));
-    });
+    body.vaccines.forEach((v, i) => form.append(el("div", { class: "vax" }, field(`vaccines[${i}].vacuna`, `Vacuna ${i + 1}`, "text", v.vacuna), catalogRow("vax", i, v.catalog_item_id, false))));
+    $("billPreview").replaceChildren();
     // Discarded panel: reason + quote, never pre-filled.
     const list = $("discarded");
     list.replaceChildren();
@@ -303,18 +321,31 @@
         if (last) node[key][idx] = leaf; else node = node[key][idx] = node[key][idx] || {};
       });
     }
-    document.querySelectorAll("#soap .med").forEach((m, i) => {
-      const cat = m.querySelector("select").value;
-      if (out.prescription[i] && cat) out.prescription[i].catalog_item_id = cat;
-    });
+    // Billable lines come from each medication/vaccine block: catalog concept + quantity, unless the owner buys it elsewhere.
+    const bill = (kind, i, target) => {
+      const cat = $(`${kind}-cat-${i}`).value;
+      const own = kind === "med" && $(`med-own-${i}`).checked;
+      if (!target || !cat) return;
+      target.catalog_item_id = cat;
+      if (own) { target.owner_sourced = true; return; }
+      const qty = $(`${kind}-qty-${i}`);
+      out.billable.push({ catalog_item_id: cat, quantity: qty.dataset.ai ? JSON.parse(qty.dataset.ai) : { value: Number(qty.value), source: "doctor" } });
+    };
+    document.querySelectorAll("#soap .med").forEach((_, i) => bill("med", i, out.prescription[i]));
+    document.querySelectorAll("#soap .vax").forEach((_, i) => bill("vax", i, out.vaccines[i]));
     out.prescription = out.prescription.filter(Boolean);
     out.vaccines = out.vaccines.filter(Boolean);
-    out.billable = out.billable.filter(Boolean).map((b, i) => ({ ...b, catalog_item_id: (consultDraftBillable()[i] || {}).catalog_item_id }));
     if (out.plan.urgent_instructions) out.plan.urgent_instructions = out.plan.urgent_instructions.filter(Boolean);
     return out;
   }
   let lastDraftBillable = [];
-  const consultDraftBillable = () => lastDraftBillable;
+  $("previewBtn").addEventListener("click", async () => {
+    $("previewState").textContent = "Calculando…";
+    const { ok, status, data } = await api(`/${consultId}/bill-preview`, { method: "POST", body: JSON.stringify(collect()) });
+    if (!ok) { $("billPreview").replaceChildren(); $("previewState").textContent = `No se pudo calcular (${status}): ${data.error || ""}${data.issues ? " · " + JSON.stringify(data.issues) : ""}`; return; }
+    renderBill($("billPreview"), data);
+    $("previewState").textContent = "Así se cobrará al aprobar (los precios vienen del catálogo del servidor).";
+  });
 
   $("approveBtn").addEventListener("click", async () => {
     $("approveBtn").disabled = true; $("approveState").textContent = "Enviando…";
