@@ -39,4 +39,11 @@ run_mutant "consent timestamp overwritable" src/routes/sim.ts \
   's/WHERE id = ?3 AND owner_consent_at IS NULL/WHERE id = ?3/' test/sim.test.ts || status=1
 run_mutant "post-model human re-check removed" src/agent/run.ts \
   's/if (await humanHasChat(ctx, await recentHistory(env, conversationId))) return null;/if (false) return null;/' test/sim.test.ts || status=1
+# V20 (clinical): the grounding number rule and the strict schema are behavior-critical.
+run_mutant "grounding ignores numbers not present in the quote" src/clinical/grounding.ts \
+  's/for (const n of numbersIn(valueText)) if (!quoted.has(n)) return "number_not_quoted";/for (const n of numbersIn(valueText)) if (!quoted.has(n) \&\& false) return "number_not_quoted";/' \
+  test/grounding.test.ts || status=1
+run_mutant "draft schema accepts extra keys (a price) at the root" src/clinical/schema.ts \
+  '/^      billable: z.array/{n;n;s/\.strict();/.passthrough();/}' \
+  test/fill.test.ts || status=1
 exit $status

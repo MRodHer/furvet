@@ -5,6 +5,7 @@ export interface Env {
   DB: D1Database;
   FILES: R2Bucket;
   AI: Ai;
+  ASSETS: Fetcher;
   // [vars] in wrangler.toml
   PAYPAL_ENV: string;
   CURRENCY: string;
@@ -12,6 +13,8 @@ export interface Env {
   BOT_ENABLED: string;
   SIM_DAILY_MESSAGE_CAP: string;
   CLINIC_NAME: string;
+  MAX_AUDIO_BYTES: string;
+  AUDIO_DAILY_SECONDS_CAP: string;
   // secrets (wrangler secret put)
   ANTHROPIC_API_KEY?: string;
   PAYPAL_CLIENT_ID?: string;

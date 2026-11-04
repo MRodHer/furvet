@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; media-src 'self' blob:; form-action 'none'; base-uri 'none'">
+<meta name="robots" content="noindex">
+<title>FurVet — consola de la doctora</title>
+<style>
+  :root { --bg:#f3f4f6; --ink:#111827; --muted:#6b7280; --accent:#0070ba; --ai:#7c3aed; --warn:#b45309; --danger:#b91c1c; --ok:#047857; }
+  body { margin:0; font-family: system-ui, sans-serif; background:var(--bg); color:var(--ink); }
+  main { max-width: 1200px; margin: 0 auto; padding: 16px; }
+  h1 { font-size: 1.2rem; margin: 0 0 4px; } h2 { font-size: 1rem; margin: 16px 0 8px; } h3 { font-size:.9rem; margin: 12px 0 4px; color:var(--muted); text-transform: uppercase; letter-spacing:.03em; }
+  .note { color: var(--muted); font-size: .85rem; }
+  section.card { background:#fff; border:1px solid #e5e7eb; border-radius:12px; padding:12px; margin: 10px 0; }
+  button { padding:8px 12px; border:0; border-radius:8px; background:var(--accent); color:#fff; font-size:.95rem; cursor:pointer; }
+  button[disabled] { opacity:.45; cursor:not-allowed; }
+  button.secondary { background:#e5e7eb; color:var(--ink); }
+  button.link { background:none; color:var(--accent); padding:0 4px; text-decoration: underline; font-size:.8rem; }
+  select, input[type=text], input[type=number], textarea { width:100%; box-sizing:border-box; padding:6px 8px; border:1px solid #d1d5db; border-radius:6px; font-size:.95rem; font-family: inherit; }
+  textarea { min-height: 48px; resize: vertical; }
+  .row { display:flex; gap:8px; align-items:center; flex-wrap: wrap; }
+  #status { min-height: 1.2em; font-size:.9rem; margin-top:6px; }
+  #status.err { color: var(--danger); } #status.ok { color: var(--ok); }
+  .rec { display:inline-block; width:12px; height:12px; border-radius:50%; background:#d1d5db; vertical-align:middle; margin-right:6px; }
+  .rec.on { background:var(--danger); animation: blink 1s infinite; } @keyframes blink { 50% { opacity:.3; } }
+  #timer { font-variant-numeric: tabular-nums; font-weight:600; }
+  .cols { display:grid; grid-template-columns: 1fr 1.3fr; gap:12px; } @media (max-width: 900px) { .cols { grid-template-columns: 1fr; } }
+  #transcript { max-height: 75vh; overflow-y:auto; }
+  .seg { padding:6px 8px; border-radius:8px; margin:4px 0; display:flex; gap:8px; align-items:flex-start; border:1px solid transparent; }
+  .seg:target, .seg.hl { background:#fef3c7; border-color:#f59e0b; }
+  .seg .who { min-width: 74px; font-size:.75rem; padding:3px 6px; border-radius:6px; background:#e5e7eb; color:var(--ink); }
+  .seg .who.doctor { background:#dbeafe; } .seg .who.owner { background:#dcfce7; }
+  .seg time { color:var(--muted); font-size:.75rem; min-width: 44px; }
+  .field { margin: 8px 0; }
+  .field label { display:block; font-size:.85rem; margin-bottom:2px; }
+  .badge { display:inline-block; font-size:.7rem; padding:1px 6px; border-radius:999px; background:#ede9fe; color:var(--ai); border:1px solid #c4b5fd; margin-left:6px; vertical-align: middle; }
+  .field[data-source="doctor"] .badge, .field[data-source="doctor"] .link { display:none; }
+  .warn { color: var(--warn); font-size:.8rem; }
+  #discarded li { font-size:.85rem; margin:4px 0; } #discarded q { color:var(--muted); }
+  .med { border:1px dashed #d1d5db; border-radius:8px; padding:8px; margin:6px 0; }
+  .grid2 { display:grid; grid-template-columns: 1fr 1fr; gap:6px; }
+  .sys { display:grid; grid-template-columns: 140px auto auto 1fr; gap:6px; align-items:center; font-size:.85rem; margin:3px 0; }
+  .hidden { display:none; }
+  .sr-only { position:absolute; width:1px; height:1px; overflow:hidden; clip:rect(0 0 0 0); }
+</style>
+</head>
+<body>
+<main>
+  <h1>FurVet — consola de la doctora</h1>
+  <p class="note">Demo del hackatón: datos ficticios. El audio se transcribe y se descarta; nunca se guarda. Lo que marca <span class="badge">IA</span> viene de la transcripción y lleva su frase; lo que la IA no pudo sustentar aparece en «Descartado», nunca prellenado. Nada sale al dueño hasta que apruebes.</p>
+
+  <section class="card" aria-labelledby="h-pick">
+    <h2 id="h-pick">1. Consulta</h2>
+    <div class="row">
+      <label for="apptSel" class="sr-only">Cita</label>
+      <select id="apptSel" style="max-width:520px"></select>
+      <button id="openBtn" type="button">Abrir consulta</button>
+      <button id="reloadBtn" type="button" class="secondary">Actualizar lista</button>
+    </div>
+    <p class="note">Sólo aparecen citas con anticipo capturado. <span id="consultMeta"></span></p>
+  </section>
+
+  <section class="card hidden" id="consentCard" aria-labelledby="h-consent">
+    <h2 id="h-consent">2. Consentimiento de grabación (dos capas)</h2>
+    <p>Dueño (en el chat): <strong id="ownerConsent">—</strong></p>
+    <label><input type="checkbox" id="doctorBox"> Confirmo que el dueño fue informado y acepta que se grabe la consulta; el audio se borra en cuanto se transcribe. (texto <code>doctor-v1-2026-11-04</code>)</label>
+    <div class="row" style="margin-top:6px"><button id="doctorConsentBtn" type="button" disabled>Registrar mi confirmación</button> <span id="doctorConsentState" class="note"></span></div>
+  </section>
+
+  <section class="card hidden" id="recCard" aria-labelledby="h-rec">
+    <h2 id="h-rec">3. Grabación</h2>
+    <div class="row">
+      <button id="recBtn" type="button" disabled>Grabar</button>
+      <span><span class="rec" id="recDot" aria-hidden="true"></span><span id="recLabel">Sin grabar</span> · <span id="timer">00:00</span></span>
+      <span class="note">Tope 30 min · un solo archivo al terminar · se envía al detener</span>
+    </div>
+    <div id="status" aria-live="polite"></div>
+  </section>
+
+  <div class="cols hidden" id="work">
+    <section class="card" aria-labelledby="h-tr">
+      <h2 id="h-tr">4. Transcripción <span class="note">(clic en la etiqueta cambia quién habla)</span></h2>
+      <div id="transcript"></div>
+    </section>
+    <section class="card" aria-labelledby="h-form">
+      <h2 id="h-form">5. Expediente</h2>
+      <div class="row"><button id="fillBtn" type="button">Generar borrador con IA</button> <span id="fillState" class="note"></span></div>
+      <form id="soap" autocomplete="off"></form>
+      <h3>Descartado por falta de sustento</h3>
+      <ul id="discarded"><li class="note">Nada todavía.</li></ul>
+      <div class="row" style="margin-top:12px"><button id="approveBtn" type="button" disabled>Aprobar y cobrar saldo</button> <span id="approveState" class="note"></span></div>
+    </section>
+  </div>
+</main>
+<script src="/console.js"></script>
+</body>
+</html>

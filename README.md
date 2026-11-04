@@ -3,15 +3,15 @@
 *Because every patient is someone's fur bestie.* Vets subscribe with PayPal; families pay with PayPal.
 
 > Built for the PayPal AI Hackathon 2026. Runs 100% in PayPal **sandbox**.
-> Status (Nov 4): **step 1 built and tested** — booking agent, deposit via PayPal Orders, verified + idempotent webhook, append-only ledger, chat simulator and AG Grid board. Steps 2–6 are in progress; everything below marked *planned* is not yet in the code.
+> Status (Nov 4): **steps 1–3 built and tested** — booking agent, deposit via PayPal Orders, verified + idempotent webhook, append-only ledger, chat simulator, AG Grid board, two-layer recording consent, transcription (Workers AI Whisper) with speaker roles, grounded AI draft and the doctor console. Steps 4–6 are in progress; everything below marked *planned* is not yet in the code.
 
 **Live demo:** `<URL>` · **Video:** `<YouTube URL>`
 
 ## What it does
 
 1. **Booking + deposit** *(built)*. A pet owner chats with an AI agent (WhatsApp in production; a web chat simulator in the demo), books a consult and pays a deposit with PayPal. The agent's tools carry **no money fields**: the deposit amount is read from the clinic catalog on the server.
-2. **Consult capture** *(in progress)*. With the owner's on-screen consent, the assistant records the consult, transcribes it (Workers AI Whisper) and labels the vet's and the owner's turns. Audio is never stored.
-3. **Clinical draft** *(in progress)*. Claude fills a SOAP note, vital signs, exam by body system, prescription and vaccines. Every AI-filled field is flagged and linked to the transcript sentence that supports it; a deterministic validator discards any number or dose the transcript does not literally contain. The vet reviews and approves.
+2. **Consult capture** *(built)*. With the owner's consent (chat button) **and** the vet's (console checkbox), the console records the consult, the Worker transcribes it with Workers AI Whisper and Claude labels the vet's and the owner's turns by content (editable). The audio is never stored: no blob column exists, and a test searches every table for the uploaded bytes.
+3. **Clinical draft** *(built; approval in progress)*. Claude fills a SOAP note, vital signs, exam by body system, prescription and vaccines through a forced tool whose strict schema has **no price field**. Every AI-filled field is flagged and linked to the transcript sentence that supports it; a deterministic validator discards any quote that is not literally in the transcript, any number not present in its quote, any value outside physiological ranges, and marks a prescription incomplete until dose, frequency and duration carry a quoted number and unit. The vet reviews and approves.
 4. **Balance payment** *(planned)*. Billable items are detected from the consult; **prices come from the server catalog, never from the model**. Same verified webhook and ledger as the deposit.
 5. **Delivery** *(planned)*. Prescription and urgent instructions are delivered immediately, always. The full report (plain-language explanation + images chosen by the vet) is released as a PDF once payment is confirmed.
 6. **Vet as customer** *(planned)*. The clinic pays for the assistant with PayPal Subscriptions.
@@ -32,7 +32,7 @@ Devpost requires this disclosure. The git tag `pre-hackathon` marks the copied c
 - The *pattern* in `src/agent/claude.ts` (forced `tool_choice` + strict schema on the tool input) and the *rules* of `src/agent/run.ts` (fail-closed guards, one place talks to Claude, silence instead of invented replies) come from the author's earlier Python WhatsApp sales agent; the TypeScript is new.
 - The clinical field names and enums (SOAP sections, vitals, prescription, vaccines) follow the author's earlier vet-clinic app; no component code was copied.
 
-**Built during the hackathon (Nov 4 onward):** everything else — the Worker, D1 schema and migrations, money/ledger modules, PayPal client, webhook, booking tools, chat simulator, board, tests and scripts.
+**Built during the hackathon (Nov 4 onward):** everything else — the Worker, D1 schema and migrations, money/ledger modules, PayPal client, webhook, booking tools, chat simulator, board, doctor auth and console, transcription, speaker roles, clinical schema, grounding validator, tests and scripts.
 
 ## Setup
 
@@ -58,13 +58,16 @@ Deploy: `npx wrangler d1 create furvet` (paste the id into `wrangler.toml`), `np
 - **The model never sets a price.** Tool schemas have no money fields and reject extra keys; the deposit amount is read from the catalog; a 0-priced catalog refuses to charge and `/health` reports it.
 - **Agent guards.** The bot stays silent (never invents) when a person has the chat, when state is unreadable, when the key is missing, or when the model did not finish its turn. Owner text is data, not instructions.
 - **No PII in logs or on the board.** Logs carry ids, enums and error names; webhook payloads are stored without `payer`/`payment_source`; the board API never returns raw payloads.
-- **Mutation control.** `scripts/mutants.sh` injects nine money/validation defects (amount, currency on both paths, signature verdict, idempotent claim, strict tool schema, consent evidence, post-model human re-check) and requires the tests to go red.
+- **Audio never persists; consent in two layers.** The audio route refuses in a fixed order — no provider → 503, missing owner or vet consent → 409, over size (header **and** stream) → 413, bytes that are not webm/ogg/mp4 → 415, daily budget (reserved atomically before the provider call) → 429. Bytes stay in request memory; `PRIVACY.md` documents the provider's retention.
+- **The AI can only cite, not invent.** Each proposed field carries segment ids and an exact quote; the server validator (no model) drops anything that is not a literal substring, any number absent from its quote, out-of-range vitals, and unknown catalog ids. Drafts and approvals are append-only rows.
+- **Doctor console.** HTTP Basic (constant-time compare, 503 when unconfigured) in front of `/console` and every `/api/v1/consults/*` route; CSP `default-src 'self'`; all transcript text rendered with `textContent`.
+- **Mutation control.** `scripts/mutants.sh` injects eleven money/validation defects (amount, currency on both paths, signature verdict, idempotent claim, strict tool schema, consent evidence, post-model human re-check, grounding numbers, draft schema strictness) and requires the tests to go red.
 - Rate limiting per IP is configured at the Cloudflare edge (WAF rules), not in code; the app enforces a daily demo cap and a per-conversation cap.
 
 ## AI tools used
 
 - **Anthropic Claude** — booking agent (tool use) and clinical note drafting at runtime.
-- **Cloudflare Workers AI (Whisper)** — consult transcription.
+- **Cloudflare Workers AI (`@cf/openai/whisper-large-v3-turbo`)** — consult transcription. Input is the audio as base64 (per Cloudflare's types and tutorial); no documented size limit, so the deploy-day smoke test measures a long recording.
 - **AG Grid Community** — the ledger board (sponsor tool).
 - **Claude Code** — coding assistant during development. All generated code is reviewed and tested by the author.
 

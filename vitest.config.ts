@@ -17,6 +17,8 @@ export default defineConfig(async () => {
             PAYPAL_WEBHOOK_ID: "WH-TEST",
             ANTHROPIC_API_KEY: "sk-ant-test",
             PUBLIC_BASE_URL: "https://furvet.test",
+            DOCTOR_DEMO_USER: "doctor",
+            DOCTOR_DEMO_PASSWORD: "test-doctor-pass",
           },
         },
       }),
