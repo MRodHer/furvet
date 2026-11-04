@@ -2,7 +2,7 @@
 // (they now assert the CORRECT behaviour), plus a "denies on error" case per barrier.
 import { env } from "cloudflare:test";
 import { afterEach, describe, expect, it } from "vitest";
-import { LOCKOUT } from "../src/auth";
+import { LOCKOUT, originKey } from "../src/auth";
 import { redactWebhook } from "../src/ledger";
 import { approvedBody, approvedEvent, captureCompletedEvent, captureLogs, claudeToolFake, count, depositCaptured, doctorEnv, doctorHeaders, json, makeApp, paypalFakes, PP, seedConfirmed, seedConsult, uniqueOrderFake, webhookHeaders } from "./helpers";
 
@@ -44,7 +44,7 @@ async function charged() {
   return { ...s, ...made, charge, value: (out.balance_cents / 100).toFixed(2), hook };
 }
 
-describe("H3: doctor login lockout (per origin, progressive, bounded; global cap; fail-closed)", () => {
+describe("H3: doctor login lockout (per origin only, progressive, bounded, fail-closed)", () => {
   let restore: (() => void) | null = null;
   afterEach(() => restore?.());
   const PATH = "/api/v1/consults/appointments";
@@ -90,34 +90,42 @@ describe("H3: doctor login lockout (per origin, progressive, bounded; global cap
     expect((await failuresOf(`ip:${A}`))!).toMatchObject({ failures: 1, blocked_until: 0 });
   });
 
-  it("GLOBAL_THRESHOLD failures from any origins → every origin gets 429 for at most GLOBAL_BLOCK_MS (distributed brute force is throttled, the doctor's outage is bounded)", async () => {
+  it("no global coupling: many failures from many origins never block a fresh origin (a stranger cannot lock the doctor out)", async () => {
     const { app } = makeApp({});
-    await env.DB.prepare("INSERT INTO auth_failures (key, failures, window_start, blocked_until) VALUES ('global', ?1, ?2, 0) ON CONFLICT(key) DO UPDATE SET failures = ?1, window_start = ?2, blocked_until = 0").bind(LOCKOUT.GLOBAL_THRESHOLD - 1, Date.now()).run();
-    expect((await app.request(PATH, { headers: wrong("203.0.113.40") }, doctorEnv())).status).toBe(401);
-    const other = await app.request(PATH, { headers: doctorHeaders(from("203.0.113.41")) }, doctorEnv());
-    expect(other.status).toBe(429);
-    expect(Number(other.headers.get("Retry-After"))).toBeLessThanOrEqual(LOCKOUT.GLOBAL_BLOCK_MS / 1000);
-    await env.DB.prepare("DELETE FROM auth_failures WHERE key = 'global'").run();
-    expect((await app.request(PATH, { headers: doctorHeaders(from("203.0.113.41")) }, doctorEnv())).status).toBe(200);
+    for (let i = 0; i < 60; i++) expect((await app.request(PATH, { headers: wrong(`203.0.113.${100 + (i % 20)}`) }, doctorEnv())).status).toBe(401);
+    expect(await count("auth_failures", "key = 'global'")).toBe(0);
+    expect((await app.request(PATH, { headers: doctorHeaders(from("203.0.113.200")) }, doctorEnv())).status).toBe(200);
+  });
+
+  it("IPv6 counts by /64: addresses of the same /64 share the counter; another /64 is untouched", async () => {
+    expect(originKey("2001:db8:abcd:12::1")).toBe("ip:2001:0db8:abcd:0012::/64");
+    expect(originKey("2001:db8:abcd:12:ffff:ffff:ffff:ffff")).toBe("ip:2001:0db8:abcd:0012::/64");
+    expect(originKey("::1")).toBe("ip:0000:0000:0000:0000::/64");
+    expect(originKey("198.51.100.7")).toBe("ip:198.51.100.7");
+    const { app } = makeApp({});
+    for (let i = 0; i < LOCKOUT.IP_THRESHOLD; i++) expect((await app.request(PATH, { headers: wrong(`2001:db8:1:2::${i + 10}`) }, doctorEnv())).status).toBe(401);
+    expect((await app.request(PATH, { headers: doctorHeaders(from("2001:db8:1:2:dead:beef::1")) }, doctorEnv())).status).toBe(429);
+    expect((await app.request(PATH, { headers: doctorHeaders(from("2001:db8:1:3::1")) }, doctorEnv())).status).toBe(200);
   });
 
   it("denies on error: counter unreadable → 503; counter unwritable → 401 even with the right credential; never a pass", async () => {
     const { app } = makeApp({});
-    const readDown = doctorEnv({ DB: flakyDb(env.DB, (sql) => sql.startsWith("SELECT MAX(blocked_until)")) });
+    const readDown = doctorEnv({ DB: flakyDb(env.DB, (sql) => sql.startsWith("SELECT blocked_until FROM auth_failures")) });
     expect((await app.request(PATH, { headers: doctorHeaders(from("203.0.113.50")) }, readDown)).status).toBe(503);
-    const writeDown = doctorEnv({ DB: flakyDb(env.DB, (sql) => /auth_failures/.test(sql) && !sql.startsWith("SELECT MAX")) });
+    const writeDown = doctorEnv({ DB: flakyDb(env.DB, (sql) => /auth_failures/.test(sql) && !sql.startsWith("SELECT")) });
     expect((await app.request(PATH, { headers: doctorHeaders(from("203.0.113.51")) }, writeDown)).status).toBe(401);
     expect((await app.request(PATH, { headers: wrong("203.0.113.51") }, writeDown)).status).toBe(401);
   });
 
-  it("the denial is logged with an origin signal (hash) and never the address itself", async () => {
+  it("the denial is logged with the count and a reason, never the address nor anything derived from it", async () => {
     const logs = captureLogs();
     restore = logs.restore;
     const { app } = makeApp({});
     expect((await app.request(PATH, { headers: wrong("203.0.113.60") }, doctorEnv())).status).toBe(401);
     const denied = logs.lines.find((l) => l.includes("doctor_auth_denied"));
-    expect(denied).toMatch(/"origin":"[0-9a-f]{16}"/);
+    expect(denied).toMatch(/"reason":"password"/);
     expect(denied).toMatch(/"failures":1/);
+    expect(denied).not.toMatch(/origin|ip/i);
     for (const l of logs.lines) expect(l).not.toContain("203.0.113.60");
   });
 });
@@ -228,13 +236,16 @@ describe("I1 + I3", () => {
     await expect(env.DB.prepare("DELETE FROM delivery_tokens WHERE consult_id = ?1").bind(t.consult).run()).rejects.toThrow(/append-only/);
   });
 
-  it("I3: the 402 page carries a CSP that allows nothing", async () => {
+  it("I3: the 402 page carries a CSP that allows only its own inline style (header and body agree)", async () => {
     const t = await charged();
     const token = (await env.DB.prepare("SELECT text FROM messages WHERE conversation_id = ?1 AND text LIKE '%/r/%' ORDER BY id DESC LIMIT 1").bind(t.conv).first<{ text: string }>())!.text;
     const path = new URL(/https:\/\/\S+\/r\/[A-Za-z0-9_-]{43}/.exec(token)![0]).pathname;
     const r = await t.app.request(path, {}, doctorEnv());
     expect(r.status).toBe(402);
-    expect(await r.text()).toContain(`<meta http-equiv="Content-Security-Policy" content="default-src 'none'">`);
+    const html = await r.text();
+    expect(html).toContain(`<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'">`);
+    expect(html).not.toMatch(/<script|<img|<link|src=/); // nothing the policy would block
+    expect(html).toMatch(/<body style="/); // the one inline style the policy allows
   });
 });
 

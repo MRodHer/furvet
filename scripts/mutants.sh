@@ -100,6 +100,8 @@ run_mutant "lockout check removed (H3)" src/auth.ts \
   's/if (waitMs > 0) {/if (false) {/' test/hardening.test.ts || status=1
 run_mutant "lockout store failure lets the right credential in (H3 fail-closed)" src/auth.ts \
   's|return false; // store down ⇒ deny, even with the right credential|return ok;|' test/hardening.test.ts || status=1
+run_mutant "IPv6 counted per full address instead of /64 (H3)" src/auth.ts \
+  's/return `ip:${full.slice(0, 4)/return `ip:${full.slice(0, 8)/' test/hardening.test.ts || status=1
 run_mutant "deposit concept billable as a line (H4)" src/routes/approve.ts \
   "s/WHERE category <> 'anticipo' AND id IN/WHERE id IN/" test/hardening.test.ts || status=1
 run_mutant "over-cap audio upload reserves budget (H5)" src/routes/consults.ts \

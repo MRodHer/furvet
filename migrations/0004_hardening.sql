@@ -1,6 +1,6 @@
 -- 0004 — hardening (audit H3, H7, I1). DDL only; forward-only.
 
--- H3: failed doctor-login counter per origin key ("ip:<addr>" or "global"), with a progressive block.
+-- H3: failed doctor-login counter per origin key ("ip:<IPv4>" or "ip:<IPv6 /64>::/64"), with a progressive block.
 -- Only the Worker writes here; rows carry no credential and no PII (the ip is the key, never logged raw).
 CREATE TABLE auth_failures (
   key TEXT PRIMARY KEY CHECK (length(key) <= 80),
