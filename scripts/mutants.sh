@@ -43,4 +43,11 @@ run_mutant "jpeg metadata kept" src/images.ts \
   's/if (!isApp \&\& !isComment) out.push(segment);/out.push(segment);/' test/images.test.ts || status=1
 run_mutant "inactive catalog items can be billed" src/billing.ts \
   's/if (!item || item.active !== 1) throw/if (!item) throw/' test/billing.test.ts || status=1
+# V20 (clinical): the grounding number rule and the strict schema are behavior-critical.
+run_mutant "grounding ignores numbers not present in the quote" src/clinical/grounding.ts \
+  's/for (const n of numbersIn(valueText)) if (!quoted.has(n)) return "number_not_quoted";/for (const n of numbersIn(valueText)) if (!quoted.has(n) \&\& false) return "number_not_quoted";/' \
+  test/grounding.test.ts || status=1
+run_mutant "draft schema accepts extra keys (a price) at the root" src/clinical/schema.ts \
+  '/^      billable: z.array/{n;n;s/\.strict();/.passthrough();/}' \
+  test/fill.test.ts || status=1
 exit $status

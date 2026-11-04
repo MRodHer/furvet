@@ -3,8 +3,10 @@ import { HTTPException } from "hono/http-exception";
 import { secureHeaders } from "hono/secure-headers";
 import { DEFAULT_DEPS, type Deps, type Env } from "./env";
 import { makePayPal, type PayPalClient } from "./paypal";
+import { doctorAuth } from "./auth";
 import { approveRoutes } from "./routes/approve";
 import { chargesRoutes } from "./routes/charges";
+import { consultsRoutes } from "./routes/consults";
 import { reportRoutes } from "./routes/report";
 import { simRoutes } from "./routes/sim";
 import { webhookRoutes } from "./routes/webhook";
@@ -51,12 +53,21 @@ export function createApp(deps: Deps = DEFAULT_DEPS) {
   app.route("/api/v1/paypal/webhook", webhookRoutes(paypalFor));
   app.route("/api/v1/charges", chargesRoutes());
   app.route("/api/v1/sim", simRoutes(deps, paypalFor));
+  app.route("/api/v1/consults", consultsRoutes(deps));
   app.route("/api/v1/consults", approveRoutes(deps, paypalFor));
   app.route("/", reportRoutes(deps));
+
+  // The doctor console is a static page served only behind the doctor's credential
+  // (wrangler.toml: run_worker_first routes /console here instead of to the asset worker).
+  app.get("/console", doctorAuth(), async (c) => {
+    const page = await c.env.ASSETS.fetch(new Request(new URL("/console.html", c.req.url)));
+    return new Response(page.body, page); // a mutable copy: the asset response's headers are read-only and secureHeaders sets its own
+  });
 
   app.onError((err, c) => {
     // Middleware-raised responses (e.g. the 401 of basicAuth) are answers, not failures.
     if (err instanceof HTTPException) return err.getResponse();
+    // routePath, never the concrete path: /r/:token and /rx/:token carry secrets.
     console.log(JSON.stringify({ event: "unhandled_error", error: err.name, route: c.req.routePath }));
     return c.json({ error: "internal error" }, 500);
   });
