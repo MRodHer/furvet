@@ -181,7 +181,10 @@ async function createDeposit(ctx: ToolContext, appointmentId: string): Promise<s
     log("charge_refused", { reason: "paypal_not_configured", appointment_id: appt.id });
     return "Los pagos no están disponibles en este momento.";
   }
-  const chargeId = crypto.randomUUID();
+  // The charge id IS the appointment id: deterministic, like the PayPal-Request-Id.
+  // A retry after a crash between createOrder and claimCharge gets the same order
+  // back from PayPal (same request id) with a custom_id that still equals our row.
+  const chargeId = appt.id;
   const order = await ctx.paypal.createOrder({
     amountCents: item.price_cents,
     currency: env.CURRENCY,
@@ -209,7 +212,7 @@ async function createDeposit(ctx: ToolContext, appointmentId: string): Promise<s
   const row = claimed ? null : await currentCharge(env.DB, "appointment_id", appt.id);
   const url = claimed ? order.approveUrl : row?.approve_url;
   if (!url) return "No se pudo generar el cobro.";
-  log("charge_created", { charge_id: claimed ? chargeId : (row?.id ?? ""), kind: "deposit", amount_cents: item.price_cents });
+  log("charge_created", { charge_id: chargeId, claimed, kind: "deposit", amount_cents: item.price_cents });
   return `Liga de pago: ${url} · Anticipo ${formatCents(item.price_cents, env.CURRENCY)}`;
 }
 

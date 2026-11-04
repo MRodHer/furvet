@@ -1,5 +1,6 @@
 import { env } from "cloudflare:test";
 import { afterEach, describe, expect, it } from "vitest";
+import type { Env } from "../src/env";
 import { claimCharge } from "../src/ledger";
 import {
   approvedEvent,
@@ -31,7 +32,7 @@ async function seedDeposit(amountCents = 20000) {
   return { appt, chargeId, orderId, apptStatus, events };
 }
 
-function post(app: ReturnType<typeof makeApp>["app"], body: unknown, e = env, headers = webhookHeaders()) {
+function post(app: ReturnType<typeof makeApp>["app"], body: unknown, e: Env = env, headers = webhookHeaders()) {
   return app.request(PATH, { method: "POST", headers, body: typeof body === "string" ? body : JSON.stringify(body) }, e);
 }
 
@@ -50,7 +51,7 @@ describe("PayPal webhook (E1-E4, E6, E14, D.1)", () => {
     const { chargeId, orderId, apptStatus, events } = await seedDeposit();
     const logs = captureLogs();
     restore = logs.restore;
-    const { app, count: calls } = makeApp(paypalFakes({ verify: "FAILURE" }));
+    const { app, count: calls } = makeApp(paypalFakes({ verify: { verification_status: "FAILURE" } }));
     const res = await post(app, approvedEvent("WH-1", orderId, chargeId));
     expect(res.status).toBe(400);
     expect(calls("POST api-m.sandbox.paypal.com/v2/checkout/orders/")).toBe(0);
@@ -126,15 +127,53 @@ describe("PayPal webhook (E1-E4, E6, E14, D.1)", () => {
     expect(await events("paypal_event_id IS NOT NULL")).toBe(0);
   });
 
-  it("PayPal capture failure → capture_failed event, retry (new event id) can still capture", async () => {
-    const { chargeId, orderId, apptStatus } = await seedDeposit();
+  it("M2: transient capture failure → 503, event id NOT sealed; PayPal's retry of the SAME body captures", async () => {
+    const { chargeId, orderId, apptStatus, events } = await seedDeposit();
     const failing = paypalFakes();
     failing[PP.captureAny] = () => new Response("boom", { status: 500 });
     const { app } = makeApp(failing);
-    expect(await (await post(app, approvedEvent("WH-7", orderId, chargeId))).json()).toEqual({ status: "capture_failed" });
+    const body = approvedEvent("WH-7", orderId, chargeId);
+    const first = await post(app, body);
+    expect(first.status).toBe(503);
+    expect(await events("status = 'capture_failed'")).toBe(1);
+    expect(await events("paypal_event_id = 'WH-7'")).toBe(0);
     const { app: app2 } = makeApp(paypalFakes());
-    expect(await (await post(app2, approvedEvent("WH-8", orderId, chargeId))).json()).toEqual({ status: "captured" });
+    const retry = await post(app2, body);
+    expect(retry.status).toBe(200);
+    expect(await retry.json()).toEqual({ status: "captured" });
+    expect(await events("paypal_event_id = 'WH-7' AND status = 'captured'")).toBe(1);
     expect(await apptStatus()).toBe("confirmed");
+  });
+
+  it("M3: capture in another currency with the same number → amount_mismatch (both webhook paths)", async () => {
+    const a = await seedDeposit();
+    const { app } = makeApp(paypalFakes({ captureCurrency: "USD", captureValue: "200.00" }));
+    expect(await (await post(app, approvedEvent("WH-13", a.orderId, a.chargeId))).json()).toEqual({ status: "amount_mismatch" });
+    expect(await a.events("status = 'captured'")).toBe(0);
+    expect(await a.apptStatus()).toBe("pending_deposit");
+
+    const b = await seedDeposit();
+    const { app: app2 } = makeApp(paypalFakes());
+    expect(await (await post(app2, captureCompletedEvent("WH-14", "CAP-14", b.chargeId, "200.00", "USD"))).json()).toEqual({ status: "amount_mismatch" });
+    expect(await b.events("status = 'captured'")).toBe(0);
+  });
+
+  it("M4: verify answers anything but SUCCESS (PENDING, empty, malformed) → 400 and nothing written", async () => {
+    const { chargeId, orderId, events } = await seedDeposit();
+    for (const verify of [{ verification_status: "PENDING" }, {}, { verification_status: "success" }, "not-json-object"]) {
+      const { app, count: calls } = makeApp(paypalFakes({ verify }));
+      const res = await post(app, approvedEvent("WH-15", orderId, chargeId));
+      expect(res.status, JSON.stringify(verify)).toBe(400);
+      expect(calls("POST api-m.sandbox.paypal.com/v2/checkout/orders/")).toBe(0);
+    }
+    expect(await events("paypal_event_id IS NOT NULL")).toBe(0);
+  });
+
+  it("PAYMENT.CAPTURE.COMPLETED whose related order is not ours → ignored", async () => {
+    const { chargeId, events } = await seedDeposit();
+    const { app } = makeApp(paypalFakes());
+    expect(await (await post(app, captureCompletedEvent("WH-16", "CAP-16", chargeId, "200.00", "MXN", "ORDER-OF-SOMEONE-ELSE"))).json()).toEqual({ status: "ignored" });
+    expect(await events("paypal_event_id IS NOT NULL")).toBe(0);
   });
 
   it("PAYMENT.CAPTURE.COMPLETED with exact amount → captured once; same capture id twice is one row", async () => {

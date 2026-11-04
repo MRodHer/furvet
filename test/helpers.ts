@@ -35,20 +35,29 @@ export const PP = {
   claude: `POST api.anthropic.com/v1/messages`,
 };
 
-export function paypalFakes(opts: { verify?: "SUCCESS" | "FAILURE"; captureValue?: string; captureStatus?: string } = {}): Record<string, Handler> {
+const ordersByRequestId = new Map<string, string>();
+
+export function paypalFakes(
+  opts: { verify?: unknown; captureValue?: string; captureStatus?: string; captureCurrency?: string } = {},
+): Record<string, Handler> {
   return {
     [PP.token]: () => json({ access_token: "tok", expires_in: 3600 }),
-    [PP.orders]: (_r, body) => {
-      const b = JSON.parse(body);
-      return json({ id: "ORDER-1", status: "CREATED", links: [{ rel: "approve", href: `https://www.sandbox.paypal.com/checkoutnow?token=ORDER-1&cid=${b.purchase_units[0].custom_id}` }] });
+    // Like PayPal: the same PayPal-Request-Id yields the same order (and keeps the first custom_id).
+    [PP.orders]: (r, body) => {
+      const rid = r.headers.get("PayPal-Request-Id") ?? crypto.randomUUID();
+      const id = `ORDER-${rid}`;
+      const seen = ordersByRequestId.get(rid);
+      const customId = seen ?? String(JSON.parse(body).purchase_units[0].custom_id);
+      ordersByRequestId.set(rid, customId);
+      return json({ id, status: "CREATED", links: [{ rel: "approve", href: `https://www.sandbox.paypal.com/checkoutnow?token=${id}&cid=${customId}` }] });
     },
     [PP.captureAny]: () =>
       json({
         id: "ORDER-1",
         status: "COMPLETED",
-        purchase_units: [{ payments: { captures: [{ id: "CAP-1", status: opts.captureStatus ?? "COMPLETED", amount: { currency_code: "MXN", value: opts.captureValue ?? "200.00" } }] } }],
+        purchase_units: [{ payments: { captures: [{ id: "CAP-1", status: opts.captureStatus ?? "COMPLETED", amount: { currency_code: opts.captureCurrency ?? "MXN", value: opts.captureValue ?? "200.00" } }] } }],
       }),
-    [PP.verify]: () => json({ verification_status: opts.verify ?? "SUCCESS" }),
+    [PP.verify]: () => json(opts.verify === undefined ? { verification_status: "SUCCESS" } : opts.verify),
   };
 }
 
@@ -81,8 +90,17 @@ export function approvedEvent(id: string, orderId: string, customId: string) {
   };
 }
 
-export function captureCompletedEvent(id: string, captureId: string, customId: string, value: string) {
-  return { id, event_type: "PAYMENT.CAPTURE.COMPLETED", resource: { id: captureId, custom_id: customId, amount: { currency_code: "MXN", value } } };
+export function captureCompletedEvent(id: string, captureId: string, customId: string, value: string, currency = "MXN", orderId?: string) {
+  return {
+    id,
+    event_type: "PAYMENT.CAPTURE.COMPLETED",
+    resource: {
+      id: captureId,
+      custom_id: customId,
+      amount: { currency_code: currency, value },
+      ...(orderId ? { supplementary_data: { related_ids: { order_id: orderId } } } : {}),
+    },
+  };
 }
 
 /** Catalog + slot + contact/conversation/pet/appointment ready for a deposit. */

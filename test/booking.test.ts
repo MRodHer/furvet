@@ -79,6 +79,19 @@ describe("booking + deposit tools (E7, E8, E9, V17)", () => {
     expect(await count("charge_events", "status = 'created' AND charge_id IN (SELECT id FROM charges WHERE appointment_id = ?1)", appt)).toBe(1);
   });
 
+  it("B1: crash between createOrder and claimCharge, then retry → PayPal's custom_id still equals our charge id", async () => {
+    const { conv, appt } = await seedBooking(20000);
+    const c = ctx(conv);
+    // Intent 1 died right after the order was created (nothing claimed in D1).
+    const first = await c.paypal!.createOrder({ amountCents: 20000, currency: "MXN", customId: appt, requestId: `deposit-${appt}`, description: "x", returnUrl: "https://furvet.test/r", cancelUrl: "https://furvet.test/c" });
+    const customIdAtPayPal = new URL(first.approveUrl).searchParams.get("cid");
+    // Intent 2: the tool runs normally; PayPal (same request id) hands back the SAME order.
+    expect(await executeTool(c, "create_deposit", { appointment_id: appt })).toContain("Liga de pago");
+    const row = await env.DB.prepare("SELECT id, paypal_order_id FROM charges WHERE appointment_id = ?1").bind(appt).first<{ id: string; paypal_order_id: string }>();
+    expect(row?.id).toBe(customIdAtPayPal);
+    expect(row?.id).toBe(appt);
+  });
+
   it("no PayPal secrets → payments unavailable, nothing written", async () => {
     const { conv, appt } = await seedBooking();
     const c = ctx(conv, { paypal: null });

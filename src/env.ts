@@ -1,7 +1,21 @@
-// Bindings and vars come from `wrangler types` (worker-configuration.d.ts, generated
-// from wrangler.toml). Secrets are declared here because they never live in the toml.
-export interface Env extends Cloudflare.Env {
-  // secrets (wrangler secret put) — optional on purpose: every consumer fails closed when absent
+// Declared by hand on purpose: `wrangler types` is run with --include-env=false so the
+// type never depends on a developer's local .dev.vars (secrets must stay optional —
+// every consumer fails closed when one is absent). Keep in sync with wrangler.toml.
+export interface Env {
+  DB: D1Database;
+  FILES: R2Bucket;
+  AI: Ai;
+  ASSETS: Fetcher;
+  // [vars] in wrangler.toml
+  PAYPAL_ENV: string;
+  CURRENCY: string;
+  MAX_CHARGE_CENTS: string;
+  BOT_ENABLED: string;
+  SIM_DAILY_MESSAGE_CAP: string;
+  CLINIC_NAME: string;
+  MAX_AUDIO_BYTES: string;
+  AUDIO_DAILY_SECONDS_CAP: string;
+  // secrets (wrangler secret put)
   ANTHROPIC_API_KEY?: string;
   PAYPAL_CLIENT_ID?: string;
   PAYPAL_CLIENT_SECRET?: string;

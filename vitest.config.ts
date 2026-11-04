@@ -25,6 +25,9 @@ export default defineConfig(async () => {
     ],
     test: {
       setupFiles: ["./test/apply-migrations.ts"],
+      // One Workers runtime at a time: the suite shares a machine with wrangler dev and
+      // other agents; parallel runtimes made files abort silently under load.
+      fileParallelism: false,
     },
   };
 });

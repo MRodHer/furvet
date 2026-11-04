@@ -6,6 +6,7 @@
 //   5. parse + validate shape (400)
 //   6. idempotency: paypal_event_id UNIQUE; a replay is a 200 no-op
 //   7. money: compare OUR capture (cents + currency) against OUR charge row; mismatch never captures
+//   8. a transient capture failure is NOT sealed under the event id and answers 503, so PayPal retries
 import { Hono } from "hono";
 import { z } from "zod";
 import type { Env } from "../env";
@@ -30,6 +31,7 @@ const CaptureResource = z.object({
   id: z.string().min(1),
   custom_id: z.string().optional(),
   amount: z.object({ currency_code: z.string().length(3), value: z.string() }),
+  supplementary_data: z.object({ related_ids: z.object({ order_id: z.string().optional() }).optional() }).optional(),
 });
 
 export function webhookRoutes(paypalFor: (env: Env) => PayPalClient | null) {
@@ -87,9 +89,9 @@ export function webhookRoutes(paypalFor: (env: Env) => PayPalClient | null) {
         if (charge.status === "captured") return c.json({ status: "already_captured" });
 
         let status: ChargeStatus;
-        let captureId: string | null = null;
-        let amountCents: number | null = null;
-        let currency: string | null = null;
+        let captureId: string;
+        let amountCents: number;
+        let currency: string;
         try {
           const cap = await paypal.captureOrder(r.data.id);
           captureId = cap.captureId;
@@ -99,8 +101,11 @@ export function webhookRoutes(paypalFor: (env: Env) => PayPalClient | null) {
             ? "captured"
             : "amount_mismatch";
         } catch (e) {
-          log("paypal_capture_failed", { charge_id: charge.id, error: errName(e) });
-          status = "capture_failed";
+          // Transient: record the attempt WITHOUT sealing the event id and answer 503 so
+          // PayPal retries the same event (it only retries on non-2xx).
+          log("paypal_capture_failed", { charge_id: charge.id, event_id: event.id, error: errName(e) });
+          await recordAndSettle(env, charge.id, charge.kind, charge.appointment_id, null, "capture_failed", null, null, null, raw);
+          return c.json({ status: "capture_failed" }, 503);
         }
         await recordAndSettle(env, charge.id, charge.kind, charge.appointment_id, event.id, status, captureId, amountCents, currency, raw);
         log("paypal_webhook_processed", { event_id: event.id, charge_id: charge.id, status });
@@ -111,7 +116,8 @@ export function webhookRoutes(paypalFor: (env: Env) => PayPalClient | null) {
         const r = CaptureResource.safeParse(event.resource);
         if (!r.success || !r.data.custom_id) return c.json({ status: "ignored" });
         const charge = await currentCharge(env.DB, "id", r.data.custom_id);
-        if (!charge) {
+        const relatedOrder = r.data.supplementary_data?.related_ids?.order_id;
+        if (!charge || (relatedOrder !== undefined && relatedOrder !== charge.paypal_order_id)) {
           log("paypal_webhook_unknown_order", { event_id: event.id });
           return c.json({ status: "ignored" });
         }
@@ -147,7 +153,7 @@ async function recordAndSettle(
   chargeId: string,
   kind: "deposit" | "balance",
   appointmentId: string | null,
-  eventId: string,
+  eventId: string | null,
   status: ChargeStatus,
   captureId: string | null,
   amountCents: number | null,
