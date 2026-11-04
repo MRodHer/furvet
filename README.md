@@ -28,7 +28,7 @@ Devpost requires this disclosure. The git tag `pre-hackathon` marks the copied c
 
 **Pre-existing (copied verbatim from the author's earlier, private projects):**
 - `src/prior/hmac.ts` — HMAC-SHA256 and constant-time comparison helpers from a payment-webhook function.
-- `src/prior/text.ts` — `normalize`, `sniffMediaType` (byte-signature media detection), base64 helpers and `wrapText` for pdf-lib, from edge-function helpers.
+- `src/prior/text.ts` — `normalize`, `sniffMediaType` (byte-signature media detection), base64 helpers and `wrapText` for pdf-lib, from edge-function helpers. (Both `prior` files are consumed by the consult/report steps; in step 1 they are only present.)
 - The *pattern* in `src/agent/claude.ts` (forced `tool_choice` + strict schema on the tool input) and the *rules* of `src/agent/run.ts` (fail-closed guards, one place talks to Claude, silence instead of invented replies) come from the author's earlier Python WhatsApp sales agent; the TypeScript is new.
 - The clinical field names and enums (SOAP sections, vitals, prescription, vaccines) follow the author's earlier vet-clinic app; no component code was copied.
 
@@ -53,12 +53,12 @@ Deploy: `npx wrangler d1 create furvet` (paste the id into `wrangler.toml`), `np
 
 - **Sandbox only.** The PayPal host is a constant; `PAYPAL_ENV` must be `sandbox` or every request is 503.
 - **Webhook, fail-closed.** Raw body read once → size cap → all five PayPal headers required → `verify-webhook-signature` must answer `SUCCESS` (any error = reject) → only then parse. No webhook id configured = 503.
-- **Idempotent, append-only ledger.** `paypal_event_id` is UNIQUE; a replay is a 200 no-op. `charges`/`charge_events` have `BEFORE UPDATE/DELETE` triggers that abort. State changes (appointment confirmed) happen in the same D1 batch as the event, only when a `captured` row landed.
+- **Idempotent, append-only ledger.** `paypal_event_id` is UNIQUE; a replay is a 200 no-op. A transient capture failure is recorded without sealing the event id and answered with 503, so PayPal retries the same event. The charge id equals the appointment id, so a retried order (same `PayPal-Request-Id`) always carries a `custom_id` that matches our row. `charges`/`charge_events` have `BEFORE UPDATE/DELETE` triggers that abort. State changes (appointment confirmed) happen in the same D1 batch as the event, only when a `captured` row landed.
 - **Money.** Integer cents everywhere; PayPal values are strict two-decimal text. We capture ourselves and compare cents + currency against our own charge row: a mismatch is recorded as `amount_mismatch` and never confirms anything.
 - **The model never sets a price.** Tool schemas have no money fields and reject extra keys; the deposit amount is read from the catalog; a 0-priced catalog refuses to charge and `/health` reports it.
 - **Agent guards.** The bot stays silent (never invents) when a person has the chat, when state is unreadable, when the key is missing, or when the model did not finish its turn. Owner text is data, not instructions.
 - **No PII in logs or on the board.** Logs carry ids, enums and error names; webhook payloads are stored without `payer`/`payment_source`; the board API never returns raw payloads.
-- **Mutation control.** `scripts/mutants.sh` injects four money/validation defects and requires the tests to go red.
+- **Mutation control.** `scripts/mutants.sh` injects nine money/validation defects (amount, currency on both paths, signature verdict, idempotent claim, strict tool schema, consent evidence, post-model human re-check) and requires the tests to go red.
 - Rate limiting per IP is configured at the Cloudflare edge (WAF rules), not in code; the app enforces a daily demo cap and a per-conversation cap.
 
 ## AI tools used

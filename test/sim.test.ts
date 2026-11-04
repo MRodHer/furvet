@@ -1,5 +1,6 @@
 import { env } from "cloudflare:test";
 import { afterEach, describe, expect, it } from "vitest";
+import type { Env } from "../src/env";
 import { assertNoPii, captureLogs, count, json, makeApp, paypalFakes, PP, seedBooking, withEnv } from "./helpers";
 
 type Handler = Parameters<typeof makeApp>[0][string];
@@ -12,7 +13,7 @@ function claudeScript(responses: unknown[]): Handler {
 const endTurn = (text: string) => ({ stop_reason: "end_turn", content: [{ type: "text", text }] });
 const toolUse = (name: string, input: unknown) => ({ stop_reason: "tool_use", content: [{ type: "tool_use", id: "tu-1", name, input }] });
 
-function chat(app: ReturnType<typeof makeApp>["app"], session: string, text: string, e = env) {
+function chat(app: ReturnType<typeof makeApp>["app"], session: string, text: string, e: Env = env) {
   return app.request("/api/v1/sim/chat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ session_id: session, text }) }, e);
 }
 
@@ -61,6 +62,30 @@ describe("chat simulator + agent (E11, E13, E14, agent guards)", () => {
     ]);
     expect(await (await chat(app, assigned, "hola")).json()).toEqual({ reply: null, escalated: false });
     expect(calls(PP.claude)).toBe(0);
+  });
+
+  it("E13 guard: a claimed conversation silences the bot", async () => {
+    const session = crypto.randomUUID();
+    const { app, count: calls } = makeApp({ [PP.claude]: claudeScript([endTurn("no")]) });
+    await env.DB.batch([
+      env.DB.prepare("INSERT INTO contacts (id) VALUES (?1)").bind(session),
+      env.DB.prepare("INSERT INTO conversations (id, contact_id, claimed_by) VALUES (?1, ?1, 'recepcion')").bind(session),
+    ]);
+    expect(await (await chat(app, session, "hola")).json()).toEqual({ reply: null, escalated: false });
+    expect(calls(PP.claude)).toBe(0);
+  });
+
+  it("E13 guard: a person who takes the chat WHILE the model is thinking wins (post-call re-check)", async () => {
+    const session = crypto.randomUUID();
+    // The fake model writes a human outbound into the conversation before answering.
+    const handler: Handler = async () => {
+      await env.DB.prepare("INSERT INTO messages (conversation_id, direction, text, is_bot, created_at) VALUES (?1, 'outbound', 'Soy Val, ya te atiendo', 0, '2026-11-04T11:59:00.000Z')").bind(session).run();
+      return json(endTurn("respuesta del bot"));
+    };
+    const { app, count: calls } = makeApp({ [PP.claude]: handler });
+    expect(await (await chat(app, session, "hola")).json()).toEqual({ reply: null, escalated: false });
+    expect(calls(PP.claude)).toBe(1);
+    expect(await count("messages", "conversation_id = ?1 AND is_bot = 1", session)).toBe(0);
   });
 
   it("E13 guard: a recent human outbound silences the bot", async () => {
@@ -144,6 +169,11 @@ describe("chat simulator + agent (E11, E13, E14, agent guards)", () => {
     expect((await post({ version: "v1-2026-11-04" })).status).toBe(200);
     const row = await env.DB.prepare("SELECT owner_consent_at, owner_consent_version FROM conversations WHERE id = ?1").bind(session).first<{ owner_consent_at: string; owner_consent_version: string }>();
     expect(row).toEqual({ owner_consent_at: "2026-11-04T12:00:00.000Z", owner_consent_version: "v1-2026-11-04" });
+    // Evidence is write-once: a later click (different clock) does not move the timestamp.
+    const { app: later } = makeApp({ [PP.claude]: claudeScript([]) }, new Date("2026-11-04T13:00:00.000Z"));
+    expect((await later.request(`/api/v1/sim/${session}/consent`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ version: "v1-2026-11-04" }) }, env)).status).toBe(200);
+    const again = await env.DB.prepare("SELECT owner_consent_at FROM conversations WHERE id = ?1").bind(session).first<{ owner_consent_at: string }>();
+    expect(again?.owner_consent_at).toBe("2026-11-04T12:00:00.000Z");
     const msgs = await (await app.request(`/api/v1/sim/${session}/messages`, {}, env)).json<{ messages: unknown[]; consent: { owner_consent_version: string } }>();
     expect(msgs.messages).toHaveLength(2);
     expect(msgs.consent.owner_consent_version).toBe("v1-2026-11-04");
