@@ -36,24 +36,33 @@ export interface NewCharge {
   approveUrl: string;
 }
 
-/** Claims the header row. Returns true when THIS call inserted it (0 changes = someone else did). */
-export async function claimCharge(db: D1Database, c: NewCharge, createdRaw: unknown): Promise<boolean> {
-  const [ins] = await db.batch([
+/**
+ * The two statements of a claim: header INSERT (ON CONFLICT DO NOTHING) + 'created' event that
+ * only lands when the header was inserted by the same batch (changes() = 1). `guardSql` lets a
+ * caller chain the claim behind another row of its own batch (e.g. the bill of an approval);
+ * its placeholders start at ?11.
+ */
+export function claimChargeStatements(db: D1Database, c: NewCharge, createdRaw: unknown, guardSql = "1 = 1", ...guardBinds: unknown[]) {
+  return [
     db
       .prepare(
         `INSERT INTO charges (id, kind, appointment_id, consult_id, conversation_id, paypal_order_id, paypal_request_id, amount_cents, currency, approve_url)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+         SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10 WHERE ${guardSql}
          ON CONFLICT DO NOTHING`,
       )
-      .bind(c.id, c.kind, c.appointmentId ?? null, c.consultId ?? null, c.conversationId ?? null, c.paypalOrderId, c.paypalRequestId, c.amountCents, c.currency, c.approveUrl),
-    // Only lands if the header above was inserted by this batch (changes() = 1).
+      .bind(c.id, c.kind, c.appointmentId ?? null, c.consultId ?? null, c.conversationId ?? null, c.paypalOrderId, c.paypalRequestId, c.amountCents, c.currency, c.approveUrl, ...guardBinds),
     db
       .prepare(
         `INSERT INTO charge_events (charge_id, status, amount_cents, currency, raw)
          SELECT ?1, 'created', ?2, ?3, ?4 WHERE changes() = 1`,
       )
       .bind(c.id, c.amountCents, c.currency, JSON.stringify(createdRaw)),
-  ]);
+  ];
+}
+
+/** Claims the header row. Returns true when THIS call inserted it (0 changes = someone else did). */
+export async function claimCharge(db: D1Database, c: NewCharge, createdRaw: unknown): Promise<boolean> {
+  const [ins] = await db.batch(claimChargeStatements(db, c, createdRaw));
   return (ins?.meta.changes ?? 0) === 1;
 }
 

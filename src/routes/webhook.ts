@@ -12,7 +12,8 @@ import { z } from "zod";
 import type { Env } from "../env";
 import type { PayPalClient } from "../paypal";
 import { WEBHOOK_HEADERS } from "../paypal";
-import { currentCharge, redactWebhook, type ChargeStatus } from "../ledger";
+import { currentCharge, redactWebhook, type ChargeRow, type ChargeStatus } from "../ledger";
+import { messageInserts, newToken, tokenInsert } from "../delivery";
 import { valueToCents } from "../money";
 import { errName, log } from "../log";
 
@@ -104,10 +105,10 @@ export function webhookRoutes(paypalFor: (env: Env) => PayPalClient | null) {
           // Transient: record the attempt WITHOUT sealing the event id and answer 503 so
           // PayPal retries the same event (it only retries on non-2xx).
           log("paypal_capture_failed", { charge_id: charge.id, event_id: event.id, error: errName(e) });
-          await recordAndSettle(env, charge.id, charge.kind, charge.appointment_id, null, "capture_failed", null, null, null, raw);
+          await recordAndSettle(env, charge, null, "capture_failed", null, null, null, raw);
           return c.json({ status: "capture_failed" }, 503);
         }
-        await recordAndSettle(env, charge.id, charge.kind, charge.appointment_id, event.id, status, captureId, amountCents, currency, raw);
+        await recordAndSettle(env, charge, event.id, status, captureId, amountCents, currency, raw);
         log("paypal_webhook_processed", { event_id: event.id, charge_id: charge.id, status });
         return c.json({ status });
       }
@@ -131,7 +132,7 @@ export function webhookRoutes(paypalFor: (env: Env) => PayPalClient | null) {
           }
           status = amountCents === charge.amount_cents && r.data.amount.currency_code === charge.currency ? "captured" : "amount_mismatch";
         }
-        await recordAndSettle(env, charge.id, charge.kind, charge.appointment_id, event.id, status, r.data.id, amountCents, r.data.amount.currency_code, raw);
+        await recordAndSettle(env, charge, event.id, status, r.data.id, amountCents, r.data.amount.currency_code, raw);
         log("paypal_webhook_processed", { event_id: event.id, charge_id: charge.id, status });
         return c.json({ status });
       }
@@ -146,13 +147,12 @@ export function webhookRoutes(paypalFor: (env: Env) => PayPalClient | null) {
 /**
  * One atomic batch: append the event (idempotent on paypal_event_id and on
  * (charge, capture)), then flip the non-ledger state ONLY if this batch
- * appended a `captured` row. The appointment never confirms on a mismatch.
+ * appended a `captured` row. Nothing confirms or is delivered on a mismatch;
+ * a replay inserts no event, so no second message ever goes out.
  */
 async function recordAndSettle(
   env: Env,
-  chargeId: string,
-  kind: "deposit" | "balance",
-  appointmentId: string | null,
+  charge: ChargeRow,
   eventId: string | null,
   status: ChargeStatus,
   captureId: string | null,
@@ -160,19 +160,27 @@ async function recordAndSettle(
   currency: string | null,
   raw: string,
 ): Promise<void> {
+  // Settlement rows hang off "THIS batch inserted the event" (changes() = 1 right after the
+  // event INSERT), never off "the event exists": two concurrent deliveries of the same event
+  // both pass the `seen` check, but only one insert lands, so only one settles.
   const stmts = [
     env.DB.prepare(
       `INSERT INTO charge_events (charge_id, status, paypal_event_id, paypal_capture_id, amount_cents, currency, raw)
        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7) ON CONFLICT DO NOTHING`,
-    ).bind(chargeId, status, eventId, captureId, amountCents, currency, raw),
+    ).bind(charge.id, status, eventId, captureId, amountCents, currency, raw),
   ];
-  if (status === "captured" && kind === "deposit" && appointmentId) {
+  if (status === "captured" && charge.kind === "deposit" && charge.appointment_id) {
+    stmts.push(env.DB.prepare("UPDATE appointments SET status = 'confirmed' WHERE id = ?1 AND status = 'pending_deposit' AND changes() = 1").bind(charge.appointment_id));
+  }
+  if (status === "captured" && charge.kind === "balance" && charge.consult_id && charge.conversation_id) {
+    // The report link needs a clear token, which only exists at creation time → a fresh one per release.
+    const { token, hash } = await newToken();
+    const base = env.PUBLIC_BASE_URL ?? "";
+    const tokenLanded = (n: number) => `EXISTS (SELECT 1 FROM delivery_tokens WHERE token_sha256 = ?${n})`;
     stmts.push(
-      env.DB.prepare(
-        `UPDATE appointments SET status = 'confirmed'
-         WHERE id = ?1 AND status = 'pending_deposit'
-           AND EXISTS (SELECT 1 FROM charge_events WHERE paypal_event_id = ?2 AND status = 'captured')`,
-      ).bind(appointmentId, eventId),
+      tokenInsert(env.DB, hash, charge.consult_id, "report", new Date(), "changes() = 1"),
+      ...messageInserts(env.DB, charge.conversation_id, `Pago confirmado. Su informe completo está aquí: ${base}/r/${token}`, tokenLanded(3), hash),
+      env.DB.prepare(`UPDATE consults SET status = 'delivered' WHERE id = ?1 AND status = 'approved' AND ${tokenLanded(2)}`).bind(charge.consult_id, hash),
     );
   }
   await env.DB.batch(stmts);

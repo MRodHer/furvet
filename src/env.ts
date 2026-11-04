@@ -15,6 +15,8 @@ export interface Env {
   CLINIC_NAME: string;
   MAX_AUDIO_BYTES: string;
   AUDIO_DAILY_SECONDS_CAP: string;
+  DOCTOR_DISPLAY_NAME: string;
+  DOCTOR_LICENSE_LABEL: string;
   // secrets (wrangler secret put)
   ANTHROPIC_API_KEY?: string;
   PAYPAL_CLIENT_ID?: string;

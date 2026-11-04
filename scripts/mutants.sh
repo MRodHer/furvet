@@ -42,6 +42,32 @@ run_mutant "money parser accepts loose decimals" src/money.ts \
 run_mutant "deposit tool trusts an extra amount key" src/agent/tools.ts \
   's/const CreateDeposit = z.object({ appointment_id: z.string().uuid() }).strict();/const CreateDeposit = z.object({ appointment_id: z.string().uuid() });/' \
   test/booking.test.ts || status=1
+# ---- delivery (Constructora C, V20-C) ----
+run_mutant "bill ignores the captured deposit" src/billing.ts \
+  's/balanceCents: Math.max(totalCents - depositCents, 0)/balanceCents: Math.max(totalCents, 0)/' test/billing.test.ts || status=1
+run_mutant "bill balance may go negative" src/billing.ts \
+  's/balanceCents: Math.max(totalCents - depositCents, 0)/balanceCents: totalCents - depositCents/' test/billing.test.ts || status=1
+run_mutant "report gate accepts any charge status" src/routes/report.ts \
+  's/if (charge?.status !== "captured") {/if (!charge) {/' test/report.test.ts || status=1
+# Two barriers assert the same fact (JS status check + "this batch inserted the event" guard): each
+# alone is an equivalent mutant, so the control removes BOTH and must still go red (V12).
+run_mutant "webhook releases the report on a mismatch (both barriers removed)" src/routes/webhook.ts \
+  's/if (status === "captured" \&\& charge.kind === "balance"/if (charge.kind === "balance"/; s/tokenInsert(env.DB, hash, charge.consult_id, "report", new Date(), "changes() = 1")/tokenInsert(env.DB, hash, charge.consult_id, "report", new Date())/' test/report.test.ts || status=1
+run_mutant "explanation dose tokens matched as substrings" src/reports/explain.ts \
+  's/(?<!\[\\\\d.,\])\${esc(squash(tok))}(?!\[a-z\/\])/${esc(squash(tok))}/' test/explain.test.ts || status=1
+run_mutant "explanation validator ignores numbers" src/reports/explain.ts \
+  's/const bad = numbersIn(text).filter((n) => !allowedNumbers.has(n));/const bad: string[] = [];/' test/explain.test.ts || status=1
+run_mutant "jpeg metadata kept" src/images.ts \
+  's/if (!isApp \&\& !isComment) out.push(segment);/out.push(segment);/' test/images.test.ts || status=1
+run_mutant "inactive catalog items can be billed" src/billing.ts \
+  's/if (!item || item.active !== 1) throw/if (!item) throw/' test/billing.test.ts || status=1
+# V20 (clinical): the grounding number rule and the strict schema are behavior-critical.
+run_mutant "grounding ignores numbers not present in the quote" src/clinical/grounding.ts \
+  's/for (const n of numbersIn(valueText)) if (!quoted.has(n)) return "number_not_quoted";/for (const n of numbersIn(valueText)) if (!quoted.has(n) \&\& false) return "number_not_quoted";/' \
+  test/grounding.test.ts || status=1
+run_mutant "draft schema accepts extra keys (a price) at the root" src/clinical/schema.ts \
+  '/^      billable: z.array/{n;n;s/\.strict();/.passthrough();/}' \
+  test/fill.test.ts || status=1
 run_mutant "webhook ignores capture currency (APPROVED path)" src/routes/webhook.ts \
   's/status = cap.amountCents === charge.amount_cents \&\& cap.currency === charge.currency \&\& cap.status === "COMPLETED"/status = cap.amountCents === charge.amount_cents \&\& cap.status === "COMPLETED"/' \
   test/webhook.test.ts || status=1
@@ -55,11 +81,11 @@ run_mutant "consent timestamp overwritable" src/routes/sim.ts \
   's/WHERE id = ?3 AND owner_consent_at IS NULL/WHERE id = ?3/' test/sim.test.ts || status=1
 run_mutant "post-model human re-check removed" src/agent/run.ts \
   's/if (await humanHasChat(ctx, await recentHistory(env, conversationId))) return null;/if (false) return null;/' test/sim.test.ts || status=1
-# V20 (clinical): the grounding number rule and the strict schema are behavior-critical.
-run_mutant "grounding ignores numbers not present in the quote" src/clinical/grounding.ts \
-  's/for (const n of numbersIn(valueText)) if (!quoted.has(n)) return "number_not_quoted";/for (const n of numbersIn(valueText)) if (!quoted.has(n) \&\& false) return "number_not_quoted";/' \
-  test/grounding.test.ts || status=1
-run_mutant "draft schema accepts extra keys (a price) at the root" src/clinical/schema.ts \
-  '/^      billable: z.array/{n;n;s/\.strict();/.passthrough();/}' \
-  test/fill.test.ts || status=1
+# ---- delivery C.6b: deferred balance order + one-shot explanation release ----
+run_mutant "pay-link message sent without the claim guard" src/routes/approve.ts \
+  's/...messageInserts(env.DB, consult.conversation_id, text, "changes() = 1"),/...messageInserts(env.DB, consult.conversation_id, text),/' test/approve.test.ts || status=1
+run_mutant "explanation release guard removed (second click sends again)" src/routes/approve.ts \
+  's/(revisada por el médico):\\n${bill.explanation}`, "changes() = 1"),/(revisada por el médico):\\n${bill.explanation}`),/; s/if (await env.DB.prepare("SELECT 1 AS x FROM explanation_releases WHERE consult_id = ?1").bind(consult.id).first()) return c.json({ error: "already sent" }, 409);//' test/approve.test.ts || status=1
+run_mutant "template explanation no longer shortened (column CHECK would 500 the approval)" src/reports/explain.ts \
+  's/if (text.length > MAX_EXPLANATION_CHARS) text = \[...parts, closing\].join(" ");/if (false) text = [...parts, closing].join(" ");/; s/if (text.length > MAX_EXPLANATION_CHARS) {/if (false) {/' test/explain.test.ts || status=1
 exit $status

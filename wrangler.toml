@@ -37,9 +37,14 @@ MAX_CHARGE_CENTS = "5000000"
 BOT_ENABLED = "true"
 SIM_DAILY_MESSAGE_CAP = "300"
 CLINIC_NAME = "FurVet demo clinic"
+DOCTOR_DISPLAY_NAME = "MVZ (demo)"
+DOCTOR_LICENSE_LABEL = "Cédula profesional: DEMO"
 # Audio: 30 min at 32 kbps ≈ 7.2 MB. Daily transcription budget in seconds (free tier ≈ 214 min).
 MAX_AUDIO_BYTES = "8000000"
 AUDIO_DAILY_SECONDS_CAP = "7200"
 
 [observability]
 enabled = true
+# Invocation logs record "<METHOD> <URL>"; /r/<token> and /rx/<token> must never be logged (V13).
+[observability.logs]
+invocation_logs = false
