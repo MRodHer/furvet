@@ -171,7 +171,7 @@ El orden de comprobación es fijo y se prueba: configuración → autenticación
 - Un único archivo habla con el modelo.
 - El host del proveedor de pagos es el de sandbox y sólo ese.
 - Ningún `catch` vacío.
-- Ningún término de proyectos privados ni de datos internos en `src`, `public`, `migrations`, `test`, `seed.sql`, `wrangler.toml` (lista en el script; se amplía, nunca se acorta).
+- Ningún término de proyectos privados ni de datos internos en `src`, `public`, `migrations`, `test`, `seed.sql`, `wrangler.toml`. Los términos viven en el script sólo como huellas SHA-256 de palabras, pares de palabras y prefijos numéricos con puntos, en minúsculas (el repo es público); la lista se amplía, nunca se acorta, y el guardia se autoprueba en cada corrida con un token aleatorio plantado fuera del repo.
 
 ### 7.3 Control de mutantes (`scripts/mutants.sh`)
 
