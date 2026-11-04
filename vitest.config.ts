@@ -8,6 +8,8 @@ export default defineConfig(async () => {
     plugins: [
       cloudflareTest({
         wrangler: { configPath: "./wrangler.toml" },
+        // Every test injects a fake AI (withEnv); never open a remote session or need a wrangler login.
+        remoteBindings: false,
         miniflare: {
           bindings: {
             TEST_MIGRATIONS: migrations,

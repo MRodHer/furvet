@@ -7,12 +7,13 @@ compatibility_flags = ["nodejs_compat"]
 #   ANTHROPIC_API_KEY
 #   PAYPAL_CLIENT_ID, PAYPAL_CLIENT_SECRET, PAYPAL_WEBHOOK_ID   (sandbox only)
 #   DOCTOR_DEMO_USER, DOCTOR_DEMO_PASSWORD
+#   PUBLIC_BASE_URL   (https://<worker>.workers.dev; create_deposit refuses without it)
 # Local dev: copy .dev.vars.example to .dev.vars (gitignored).
 
 [[d1_databases]]
 binding = "DB"
 database_name = "furvet"
-database_id = "00000000-0000-0000-0000-000000000000" # replaced after `wrangler d1 create furvet`
+database_id = "31f6f3eb-370a-4c6f-b467-90d71653d3dc"
 migrations_dir = "migrations"
 
 [[r2_buckets]]

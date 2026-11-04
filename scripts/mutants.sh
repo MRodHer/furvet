@@ -5,15 +5,31 @@ set -uo pipefail
 cd "$(dirname "$0")/.."
 if [ -n "$(git status --porcelain src)" ]; then echo "src/ has uncommitted changes; commit or stash first"; exit 2; fi
 
+# pass | fail | broken — "broken" is a suite that did not run (pool start failure, no test
+# files, missing summary) and must never be read as a dead mutant.
+suite() {
+  local out; out=$(npx vitest run "$@" 2>&1 | sed 's/\x1b\[[0-9;]*m//g')
+  if grep -qE "Failed to start|Unhandled Error|No test files found" <<<"$out"; then echo broken; return; fi
+  grep -qE "^ *Tests +[1-9]" <<<"$out" || { echo broken; return; } # summary with >=1 test (not "no tests")
+  if grep -qE "Tests +[1-9][0-9]* failed" <<<"$out"; then echo fail; else echo pass; fi
+}
+
 run_mutant() { # name, file, sed-expr, test-file
   local name=$1 file=$2 expr=$3 tests=$4
   sed -i "$expr" "$file"
   if git diff --quiet -- "$file"; then echo "FAIL  $name: mutation did not apply (pattern drifted)"; return 1; fi
-  if npx vitest run "$tests" >/dev/null 2>&1; then
-    echo "FAIL  $name: tests stayed GREEN with the defect"; git checkout -- "$file"; return 1
-  fi
-  echo "ok    $name: tests went red"; git checkout -- "$file"
+  local r; r=$(suite "$tests"); git checkout -- "$file"
+  case $r in
+    fail) echo "ok    $name: tests went red" ;;
+    pass) echo "FAIL  $name: tests stayed GREEN with the defect"; return 1 ;;
+    *) echo "FAIL  $name: suite did not run ($r), not a dead mutant"; return 1 ;;
+  esac
 }
+
+# Baseline: the unmutated suite must run and pass; otherwise every "red" below would be noise.
+base=$(suite)
+if [ "$base" != pass ]; then echo "ABORT: baseline suite is $base; fix the suite before measuring mutants"; exit 2; fi
+echo "ok    baseline: suite runs and passes"
 
 status=0
 run_mutant "webhook ignores capture amount" src/routes/webhook.ts \
