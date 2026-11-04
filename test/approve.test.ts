@@ -325,6 +325,22 @@ describe("«Enviar al dueño» (second approval of the AI explanation)", () => {
     expect(await count("explanation_releases", "consult_id = ?1", consult)).toBe(1);
   });
 
+  it("template fallback with every leaf at the schema maximum → approve 201 (never a 500 from the CHECK), explanation ≤ 2000, rx sent", async () => {
+    const { consult, conv, ids } = await seedConsult();
+    const { app, calls } = makeApp(fakes());
+    const doc = (value: unknown) => ({ value, source: "doctor" });
+    const med = { medicamento: doc("a".repeat(2000)), dosis: doc("5 mg"), frecuencia: doc("cada 8 h"), duracion: doc("3 días"), via_administracion: doc("oral"), catalog_item_id: ids["MED-AMOXI"] };
+    const body = approvedBody(ids, { assessment: { diagnostico: doc("d".repeat(2000)), pronostico: doc("favorable") }, prescription: Array.from({ length: 20 }, () => med), plan: { instrucciones_cliente: doc("i".repeat(2000)) } });
+    const res = await post(app, consult, body, doctorEnv({ ANTHROPIC_API_KEY: undefined }));
+    expect(res.status).toBe(201);
+    const out = (await res.json()) as { explanation: string; explanation_source: string };
+    expect(out.explanation_source).toBe("template");
+    expect(out.explanation.length).toBeLessThanOrEqual(2000);
+    expect(calls.filter((c) => c.key === PP.claude)).toHaveLength(0);
+    expect(await count("consult_bills", "consult_id = ?1", consult)).toBe(1);
+    expect((await messages(conv)).results.map((m) => m.text).join("\n")).toContain("5 mg · cada 8 h · 3 días");
+  });
+
   it("not approved yet → 409 and nothing sent", async () => {
     const { consult, conv } = await seedConsult();
     const { app } = makeApp(fakes());

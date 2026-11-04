@@ -18,7 +18,7 @@ import { claimChargeStatements, currentCharge } from "../ledger";
 import { errName, log } from "../log";
 import { formatCents } from "../money";
 import type { PayPalClient } from "../paypal";
-import { plainExplanation } from "../reports/explain";
+import { MAX_EXPLANATION_CHARS, plainExplanation } from "../reports/explain";
 import { buildPdf } from "../reports/pdf";
 import { leafSource, leafValue, prescriptionLines, reportBlocks, rxBlocks, urgentLines, type ReportHeader } from "../reports/render";
 
@@ -191,6 +191,8 @@ export function approveRoutes(deps: Deps, paypalFor: (env: Env) => PayPalClient 
     // Content first (slow calls), then ONE atomic batch. A lost race leaves orphan R2 objects
     // under an approval_id nobody references — harmless. The explanation is stored, not sent.
     const explanation = await plainExplanation(deps.fetch, env.ANTHROPIC_API_KEY, body, consult.id);
+    // Second barrier before the column CHECK: a visible refusal, never a 500 from the batch.
+    if (explanation.text.length > MAX_EXPLANATION_CHARS) return c.json({ error: "explanation too long" }, 422);
     const header = await putReport(env, consult, approvalId, body, null, explanation.source === "ai", now.toISOString());
     await env.FILES.put(`reports/${approvalId}/rx.pdf`, buildPdf(rxBlocks(body, header)), { httpMetadata: { contentType: "application/pdf" } });
 

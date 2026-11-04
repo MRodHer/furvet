@@ -86,4 +86,6 @@ run_mutant "pay-link message sent without the claim guard" src/routes/approve.ts
   's/...messageInserts(env.DB, consult.conversation_id, text, "changes() = 1"),/...messageInserts(env.DB, consult.conversation_id, text),/' test/approve.test.ts || status=1
 run_mutant "explanation release guard removed (second click sends again)" src/routes/approve.ts \
   's/(revisada por el médico):\\n${bill.explanation}`, "changes() = 1"),/(revisada por el médico):\\n${bill.explanation}`),/; s/if (await env.DB.prepare("SELECT 1 AS x FROM explanation_releases WHERE consult_id = ?1").bind(consult.id).first()) return c.json({ error: "already sent" }, 409);//' test/approve.test.ts || status=1
+run_mutant "template explanation no longer shortened (column CHECK would 500 the approval)" src/reports/explain.ts \
+  's/if (text.length > MAX_EXPLANATION_CHARS) text = \[...parts, closing\].join(" ");/if (false) text = [...parts, closing].join(" ");/; s/if (text.length > MAX_EXPLANATION_CHARS) {/if (false) {/' test/explain.test.ts || status=1
 exit $status

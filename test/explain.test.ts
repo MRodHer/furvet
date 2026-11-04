@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { ApprovedConsult } from "../src/clinical/schema";
-import { approvedValues, explanationViolations, plainExplanation } from "../src/reports/explain";
+import { approvedValues, explanationViolations, plainExplanation, templateExplanation } from "../src/reports/explain";
 import { approvedBody, claudeToolFake, fakeFetch, PP } from "./helpers";
 
 const ids = { "MED-AMOXI": "m", "VAC-RABIA": "v" };
@@ -21,6 +21,34 @@ describe("plain explanation (V14, V8)", () => {
     // Length cap: the stored column is bounded, so an over-long text is a violation (→ retry → template).
     expect(explanationViolations("bien. ".repeat(260), facts)).toEqual(["too_long"]);
     expect(explanationViolations("bien. ".repeat(240), facts)).toBeNull();
+  });
+
+  it("template shortening never cuts inside a sentence or a dose, is validated after the cut, and always fits", () => {
+    const doc = (value: unknown) => ({ value, source: "doctor" });
+    const check = (b: ReturnType<typeof ApprovedConsult.parse>) => {
+      const t = templateExplanation(b);
+      expect(t.length).toBeLessThanOrEqual(1500);
+      expect(explanationViolations(t, approvedValues(b))).toBeNull();
+      expect(t).toMatch(/\.$/); // ends on a complete sentence
+      return t;
+    };
+    // Instructions at the schema maximum with a dose right where a blind cut would land: the whole
+    // sentence goes, "250 mg" is either intact or absent, never "25" / "250" alone.
+    const filler = "cuidados en casa ".repeat(80).trim();
+    const near = `${filler} dar 250 mg cada 12 h ${"y reposo ".repeat(60)}`.slice(0, 2000);
+    const t1 = check(ApprovedConsult.parse(approvedBody(ids, { plan: { instrucciones_cliente: doc(near) } })));
+    expect(t1).not.toContain("cuidados en casa");
+    expect(t1).toContain("Las indicaciones completas están en su receta.");
+    expect(t1).toContain("amoxicilina, 250 mg, cada 12 h, 7 días");
+    // Everything at the maximum at once: diagnosis 2000, 20 medications with 2000-char fields, instructions 2000.
+    const med = { medicamento: doc("a".repeat(2000)), dosis: doc("5 mg"), frecuencia: doc("cada 8 h"), duracion: doc("3 días"), via_administracion: doc("oral") };
+    const huge = ApprovedConsult.parse(
+      approvedBody(ids, { assessment: { diagnostico: doc("d".repeat(2000)), pronostico: doc("favorable") }, prescription: Array.from({ length: 20 }, () => med), plan: { instrucciones_cliente: doc("i".repeat(2000)) } }),
+    );
+    const t2 = check(huge);
+    expect(t2).toBe("Resumen de la consulta de su mascota, revisado y aprobado por el médico veterinario. Las indicaciones completas están en su receta. Si tiene dudas, escríbanos por este chat.");
+    // Short bodies are untouched.
+    expect(templateExplanation(body)).toContain("Indicaciones: dieta blanda 3 días");
   });
 
   it("V14: an invented dose → one retry → still bad → fixed template without AI (exactly 2 calls)", async () => {

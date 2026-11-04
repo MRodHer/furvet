@@ -76,9 +76,18 @@ export function templateExplanation(body: ApprovedConsult): string {
     );
   }
   const plan = v(body.plan.instrucciones_cliente);
-  if (plan) parts.push(`Indicaciones: ${plan}`);
-  parts.push("Si tiene dudas, escríbanos por este chat.");
-  return parts.join(" ");
+  // Approved leaves can be 2000 chars each and the stored column is bounded. Shortening never
+  // cuts inside a sentence (so never inside "250 mg"): first the free-text instructions go as a
+  // whole (they are in the rx anyway), then only complete sentences are kept.
+  const closing = "Las indicaciones completas están en su receta. Si tiene dudas, escríbanos por este chat.";
+  let text = [...parts, ...(plan ? [`Indicaciones: ${plan}`] : []), closing].join(" ");
+  if (text.length > MAX_EXPLANATION_CHARS) text = [...parts, closing].join(" ");
+  if (text.length > MAX_EXPLANATION_CHARS) {
+    const head = parts.join(" ").slice(0, MAX_EXPLANATION_CHARS - closing.length - 1);
+    text = `${head.slice(0, head.lastIndexOf(". ") + 1)} ${closing}`.trim();
+  }
+  // Validated AFTER shortening, like an AI text: anything unbacked falls to the neutral sentence.
+  return explanationViolations(text, approvedValues(body)) ? closing : text;
 }
 
 export async function plainExplanation(
