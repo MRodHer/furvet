@@ -27,6 +27,8 @@ describe("grounding validator (V4, V5, V6)", () => {
     expect(checkField(g("fiebre", "tiene fiebre alta", [4]), segs)).toBe("quote_not_in_segments");
     // A quote spanning two consecutive segments is fine; one citing an unknown segment is not.
     expect(checkField(g("decaído", "muy decaído. Tiene 39.5", [1, 2]), segs)).toBeNull();
+    // The quote must live in the CITED segments, not just anywhere in the transcript («ver frase» traceability).
+    expect(checkField(g("fiebre", "tiene fiebre", [2]), segs)).toBe("quote_not_in_segments");
     expect(checkField(g("fiebre", "tiene fiebre", [99]), segs)).toBe("segment_unknown");
     expect(checkField(g("fiebre", "tiene fiebre", [4, 99]), segs)).toBe("segment_unknown");
   });

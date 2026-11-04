@@ -61,8 +61,8 @@ describe("audio upload (V1, V2, V3, V19) — strict order 503 → 409 → 413 �
 
   it("happy path: transcribed, speakers labeled by Claude, consult → transcribed, audio never persisted (V2)", async () => {
     const marker = `MARK-${crypto.randomUUID().slice(0, 8)}`; // D1 caps LIKE patterns at 50 chars
-    const { ai, calls } = fakeAi({ text: "x", transcription_info: { duration: 61.2 }, segments: [{ start: 0, end: 3, text: " ¿Qué le pasa a Firulais? " }, { start: 3, end: 7, text: "No quiere comer desde ayer." }] });
-    const { app, count: fetchCalls } = makeApp({ [PP.claude]: () => json(toolUse("label_speakers", { labels: [{ idx: 0, speaker: "doctor" }, { idx: 1, speaker: "owner" }] })) });
+    const { ai, calls } = fakeAi({ text: "x", transcription_info: { duration: 61.2 }, segments: [{ start: 0, end: 3, text: " ¿Qué le pasa a Firulais, Laura? " }, { start: 3, end: 7, text: "No quiere comer desde ayer." }] });
+    const { app, count: fetchCalls, calls: fetches } = makeApp({ [PP.claude]: () => json(toolUse("label_speakers", { labels: [{ idx: 0, speaker: "doctor" }, { idx: 1, speaker: "owner" }] })) });
     const e = withEnv({ AI: ai });
     const { id } = await createConsult(app, e);
     const logs = captureLogs();
@@ -74,12 +74,16 @@ describe("audio upload (V1, V2, V3, V19) — strict order 503 → 409 → 413 �
     expect(calls).toHaveLength(1);
     expect((calls[0] as { audio: string }).audio).toMatch(/^[A-Za-z0-9+/]+=*$/);
     expect(fetchCalls(PP.claude)).toBe(1);
+    // M1: the owner's name never reaches the speaker-labeling call either; D1 keeps the original.
+    const labelReq = fetches.find((f) => f.key === PP.claude)!.body;
+    expect(labelReq).not.toMatch(/laura/i);
+    expect(labelReq).toContain("¿Qué le pasa a Firulais, el dueño?");
 
     const consult = await env.DB.prepare("SELECT status, audio_seconds, provider, audio_received_at FROM consults WHERE id = ?1").bind(id).first();
     expect(consult).toMatchObject({ status: "transcribed", audio_seconds: 62, provider: "@cf/openai/whisper-large-v3-turbo" });
     const { results } = await env.DB.prepare("SELECT idx, start_ms, end_ms, speaker, text FROM transcript_segments WHERE consult_id = ?1 ORDER BY idx").bind(id).all();
     expect(results).toEqual([
-      { idx: 0, start_ms: 0, end_ms: 3000, speaker: "doctor", text: "¿Qué le pasa a Firulais?" },
+      { idx: 0, start_ms: 0, end_ms: 3000, speaker: "doctor", text: "¿Qué le pasa a Firulais, Laura?" },
       { idx: 1, start_ms: 3000, end_ms: 7000, speaker: "owner", text: "No quiere comer desde ayer." },
     ]);
     // V2: no table holds the audio, and no log line carries the transcript or the audio.
@@ -165,6 +169,12 @@ describe("audio upload (V1, V2, V3, V19) — strict order 503 → 409 → 413 �
     const usage = await env.DB.prepare("SELECT audio_seconds FROM audio_usage WHERE day = '2030-02-02'").first<{ audio_seconds: number }>();
     expect(usage?.audio_seconds).toBe(2);
     expect(await count("consults", "id = ?1 AND status = 'recording'", b.id)).toBe(1);
+    // Minor 1: the very first upload of a fresh day already over the cap → 429, provider untouched.
+    const { app: app2 } = makeApp({}, new Date("2030-02-03T10:00:00.000Z"));
+    const e2 = withEnv({ AI: ai, AUDIO_DAILY_SECONDS_CAP: "1" });
+    const c2 = await createConsult(app2, e2);
+    expect((await upload(app2, c2.id, audioBody("x", 8000), e2)).status).toBe(429);
+    expect(calls).toHaveLength(1);
   });
 
   it("V19: provider failure is visible (502), consult stays 'recording', nothing stored, error TYPE logged without PII", async () => {
@@ -213,6 +223,12 @@ describe("audio upload (V1, V2, V3, V19) — strict order 503 → 409 → 413 �
     expect(await count("transcript_segments", "consult_id = ?1 AND speaker = 'doctor'", id)).toBe(1);
     expect((await patch(7, { speaker: "doctor" })).status).toBe(404);
     expect((await patch(0, { speaker: "cat" })).status).toBe(400);
+    // Minor 2: a segment of ANOTHER consult is out of reach even with the same idx.
+    const other = await createConsult(app, e);
+    expect((await upload(app, other.id, audioBody("y"), e)).status).toBe(200);
+    expect((await app.request(`/api/v1/consults/${other.id}/segments/0`, { method: "PATCH", headers: { ...DOCTOR_AUTH, "Content-Type": "application/json" }, body: JSON.stringify({ speaker: "owner" }) }, e)).status).toBe(200);
+    expect(await count("transcript_segments", "consult_id = ?1 AND speaker = 'doctor'", id)).toBe(1);
+    expect(await count("transcript_segments", "consult_id = ?1 AND speaker = 'owner'", other.id)).toBe(1);
   });
 
   it("consult creation: only confirmed appointments; one consult per appointment; owner consent snapshotted", async () => {
