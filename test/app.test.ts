@@ -1,6 +1,6 @@
 import { env } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
-import { makeApp, paypalFakes, seedBooking, withEnv } from "./helpers";
+import { DOCTOR_AUTH, makeApp, paypalFakes, seedBooking, withEnv } from "./helpers";
 
 describe("app-level guards and board", () => {
   it("PAYPAL_ENV other than sandbox → every request is 503", async () => {
@@ -32,11 +32,11 @@ describe("app-level guards and board", () => {
     const id = crypto.randomUUID();
     await claimCharge(env.DB, { id, kind: "deposit", appointmentId: appt, conversationId: conv, paypalOrderId: `O-${id}`, paypalRequestId: `deposit-${appt}`, amountCents: 20000, currency: "MXN", approveUrl: "https://www.sandbox.paypal.com/x" }, { payer: { email_address: "x@example.com" } });
     const { app } = makeApp(paypalFakes());
-    const list = await (await app.request("/api/v1/charges", {}, env)).json<Record<string, unknown>[]>();
+    const list = await (await app.request("/api/v1/charges", { headers: DOCTOR_AUTH }, env)).json<Record<string, unknown>[]>();
     const row = list.find((r) => r.id === id);
     expect(row).toMatchObject({ id, kind: "deposit", amount: "200.00", currency: "MXN", status: "created" });
     expect(JSON.stringify(list)).not.toMatch(/raw|payer|@/);
-    const events = await (await app.request(`/api/v1/charges/${id}/events`, {}, env)).json<Record<string, unknown>[]>();
+    const events = await (await app.request(`/api/v1/charges/${id}/events`, { headers: DOCTOR_AUTH }, env)).json<Record<string, unknown>[]>();
     expect(events).toHaveLength(1);
     expect(events[0]).toMatchObject({ status: "created", amount: "200.00" });
     expect(JSON.stringify(events)).not.toMatch(/raw|payer|@/);

@@ -88,4 +88,10 @@ run_mutant "explanation release guard removed (second click sends again)" src/ro
   's/(revisada por el médico):\\n${bill.explanation}`, "changes() = 1"),/(revisada por el médico):\\n${bill.explanation}`),/; s/if (await env.DB.prepare("SELECT 1 AS x FROM explanation_releases WHERE consult_id = ?1").bind(consult.id).first()) return c.json({ error: "already sent" }, 409);//' test/approve.test.ts || status=1
 run_mutant "template explanation no longer shortened (column CHECK would 500 the approval)" src/reports/explain.ts \
   's/if (text.length > MAX_EXPLANATION_CHARS) text = \[...parts, closing\].join(" ");/if (false) text = [...parts, closing].join(" ");/; s/if (text.length > MAX_EXPLANATION_CHARS) {/if (false) {/' test/explain.test.ts || status=1
+run_mutant "ledger board served without the doctor credential (H1)" src/routes/charges.ts \
+  's/app.use("\*", doctorAuth());//' test/csrf_board.test.ts || status=1
+run_mutant "cross-site guard removed (H2)" src/auth.ts \
+  's/if (crossSite || originMismatch) {/if (false) {/' test/csrf_board.test.ts || status=1
+run_mutant "body type guard removed (H2)" src/auth.ts \
+  's/if (type ? !BODY_TYPES.test(type) : !bodyless) return c.json({ error: "unsupported content type" }, 415);/if (false) return c.json({ error: "unsupported content type" }, 415);/' test/csrf_board.test.ts || status=1
 exit $status
