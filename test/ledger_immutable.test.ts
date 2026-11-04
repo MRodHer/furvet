@@ -52,3 +52,27 @@ describe("ledger is append-only (E10 / V18 — real D1 triggers)", () => {
     ).rejects.toThrow();
   });
 });
+
+describe("V18-C: bill snapshot is append-only", () => {
+  it("UPDATE/DELETE on consult_bills and bill_lines → append-only", async () => {
+    const consult = crypto.randomUUID();
+    const item = crypto.randomUUID();
+    await env.DB.batch([
+      env.DB.prepare("INSERT INTO catalog_items (id, sku, name, category, price_cents) VALUES (?1, ?1, 'x', 'otro', 100)").bind(item),
+      env.DB.prepare("INSERT INTO consult_bills (consult_id, approval_id, total_cents, deposit_cents, balance_cents, approved_by) VALUES (?1, ?2, 100, 0, 100, 'val')").bind(consult, crypto.randomUUID()),
+      env.DB.prepare("INSERT INTO bill_lines (consult_id, catalog_item_id, name, quantity, unit_price_cents, line_total_cents, source) VALUES (?1, ?2, 'x', 1, 100, 100, 'doctor_added')").bind(consult, item),
+    ]);
+    for (const sql of [
+      "UPDATE consult_bills SET balance_cents = 0 WHERE consult_id = ?1",
+      "DELETE FROM consult_bills WHERE consult_id = ?1",
+      "UPDATE bill_lines SET unit_price_cents = 1 WHERE consult_id = ?1",
+      "DELETE FROM bill_lines WHERE consult_id = ?1",
+    ]) {
+      await expect(env.DB.prepare(sql).bind(consult).run()).rejects.toThrow(/append-only/);
+    }
+    // And the CHECK keeps the arithmetic honest even for a direct writer.
+    await expect(
+      env.DB.prepare("INSERT INTO bill_lines (consult_id, catalog_item_id, name, quantity, unit_price_cents, line_total_cents, source) VALUES (?1, ?2, 'x', 2, 100, 100, 'doctor_added')").bind(consult, item).run(),
+    ).rejects.toThrow(/CHECK/);
+  });
+});

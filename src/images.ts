@@ -18,6 +18,8 @@ export interface CleanImage {
   height: number;
   /** PNG only: 8-bit grey/RGB, non-interlaced → embeddable in the PDF without decoding. */
   pngColorType?: 0 | 2;
+  /** JPEG only: 1 = grey, 3 = YCbCr/RGB (CMYK is refused). */
+  jpegComponents?: 1 | 3;
 }
 
 export const MAX_IMAGE_BYTES = 2 * 1024 * 1024;
@@ -38,6 +40,7 @@ function stripJpeg(b: Uint8Array): CleanImage {
   let i = 2;
   let width = 0;
   let height = 0;
+  let components: 1 | 3 | undefined;
   while (i + 4 <= b.length) {
     if (b[i] !== 0xff) throw new ImageError("corrupt jpeg", 415);
     const marker = b[i + 1] ?? 0;
@@ -53,6 +56,8 @@ function stripJpeg(b: Uint8Array): CleanImage {
     if (marker === 0xc0 || marker === 0xc1 || marker === 0xc2) {
       height = be16(b, i + 5);
       width = be16(b, i + 7);
+      const n = b[i + 9];
+      if (n === 1 || n === 3) components = n;
     }
     if (!isApp && !isComment) out.push(segment);
     i += 2 + len;
@@ -62,7 +67,8 @@ function stripJpeg(b: Uint8Array): CleanImage {
     }
   }
   if (!width || !height) throw new ImageError("corrupt jpeg", 415);
-  return { mime: "image/jpeg", bytes: concat(out), width, height };
+  if (!components) throw new ImageError("jpeg must be grey or colour (no CMYK)", 415);
+  return { mime: "image/jpeg", bytes: concat(out), width, height, jpegComponents: components };
 }
 
 const PNG_KEEP = new Set(["IHDR", "PLTE", "tRNS", "IDAT", "IEND"]);

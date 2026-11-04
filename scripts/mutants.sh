@@ -26,4 +26,19 @@ run_mutant "money parser accepts loose decimals" src/money.ts \
 run_mutant "deposit tool trusts an extra amount key" src/agent/tools.ts \
   's/const CreateDeposit = z.object({ appointment_id: z.string().uuid() }).strict();/const CreateDeposit = z.object({ appointment_id: z.string().uuid() });/' \
   test/booking.test.ts || status=1
+# ---- delivery (Constructora C, V20-C) ----
+run_mutant "bill ignores the captured deposit" src/billing.ts \
+  's/balanceCents: Math.max(totalCents - depositCents, 0)/balanceCents: Math.max(totalCents, 0)/' test/billing.test.ts || status=1
+run_mutant "bill balance may go negative" src/billing.ts \
+  's/balanceCents: Math.max(totalCents - depositCents, 0)/balanceCents: totalCents - depositCents/' test/billing.test.ts || status=1
+run_mutant "report gate accepts any charge status" src/routes/report.ts \
+  's/if (charge?.status !== "captured") {/if (!charge) {/' test/report.test.ts || status=1
+run_mutant "webhook releases the report on a mismatch" src/routes/webhook.ts \
+  's/if (status === "captured" \&\& charge.kind === "balance"/if (charge.kind === "balance"/' test/report.test.ts || status=1
+run_mutant "explanation validator ignores numbers" src/reports/explain.ts \
+  's/const bad = numbersIn(text).filter((n) => !allowedNumbers.has(n));/const bad: string[] = [];/' test/explain.test.ts || status=1
+run_mutant "jpeg metadata kept" src/images.ts \
+  's/if (!isApp \&\& !isComment) out.push(segment);/out.push(segment);/' test/images.test.ts || status=1
+run_mutant "approve trusts a price key in the body" src/routes/approve.ts \
+  's/const parsed = ApprovedConsult.safeParse(raw);/const parsed = ApprovedConsult.safeParse(stripUnknown(raw));/' test/approve.test.ts || status=1
 exit $status

@@ -59,6 +59,8 @@ export interface CreateOrderInput {
   returnUrl: string;
   cancelUrl: string;
   items?: OrderLine[];
+  /** Already-paid part shown as `breakdown.discount` so item_total − discount = amount. */
+  discountCents?: number;
 }
 
 export interface PayPalClient {
@@ -129,8 +131,12 @@ export function makePayPal(
       let items: unknown;
       if (input.items && input.items.length > 0) {
         const itemTotal = input.items.reduce((s, i) => s + i.quantity * i.unitCents, 0);
-        if (itemTotal !== input.amountCents) throw new PayPalError("item_total != amount");
-        amount.breakdown = { item_total: { currency_code: input.currency, value: centsToValue(itemTotal) } };
+        const discount = input.discountCents ?? 0;
+        if (itemTotal - discount !== input.amountCents) throw new PayPalError("item_total - discount != amount");
+        amount.breakdown = {
+          item_total: { currency_code: input.currency, value: centsToValue(itemTotal) },
+          ...(discount > 0 ? { discount: { currency_code: input.currency, value: centsToValue(discount) } } : {}),
+        };
         items = input.items.map((i) => ({
           name: i.name.slice(0, 127),
           quantity: String(i.quantity),
