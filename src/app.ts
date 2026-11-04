@@ -61,7 +61,7 @@ export function createApp(deps: Deps = DEFAULT_DEPS) {
   });
 
   app.onError((err, c) => {
-    if (err instanceof HTTPException) return err.getResponse(); // e.g. 401 from basic auth
+    if (err instanceof HTTPException) return err.getResponse();
     console.log(JSON.stringify({ event: "unhandled_error", error: err.name, path: new URL(c.req.url).pathname }));
     return c.json({ error: "internal error" }, 500);
   });
