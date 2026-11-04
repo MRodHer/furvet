@@ -8,7 +8,7 @@ Demo for the PayPal AI Hackathon 2026. Everything runs on Cloudflare (Workers, D
 - Logs carry only ids, counts, the provider name and error class names.
 
 ## Transcription provider (Cloudflare Workers AI, `@cf/openai/whisper-large-v3-turbo`)
-Per Cloudflare's Workers AI data-usage documentation (read 2026-11-04): "Cloudflare does not retain inputs or outputs after they are no longer needed to process the request and deliver the response" and "Cloudflare does not use Customer Content processed by Workers AI to train AI models". Cloudflare may keep operational metadata (timestamps, request sizes) that "does not include Customer Content". This project does not enable AI Gateway logging or caching.
+Per Cloudflare's Workers AI data-usage documentation (<https://developers.cloudflare.com/workers-ai/platform/data-usage/>, read 2026-11-04): "Cloudflare does not retain inputs or outputs after they are no longer needed to process the request and deliver the response" and "Cloudflare does not use Customer Content processed by Workers AI to train AI models". Cloudflare may keep operational metadata (timestamps, request sizes) that "does not include Customer Content". This project does not enable AI Gateway logging or caching.
 
 ## Transcript and AI draft
 - The transcript (text segments with timestamps and a speaker label) and every AI draft are stored in D1 as the clinical record and as evidence of what the AI proposed versus what the doctor approved (`consult_versions` is append-only).

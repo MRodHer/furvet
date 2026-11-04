@@ -7,6 +7,7 @@ import { z } from "zod";
 import { ClaudeError } from "../agent/claude";
 import { doctorAuth } from "../auth";
 import { DraftRejectedError, fillConsult } from "../clinical/fill";
+import { redactOwner } from "../clinical/redact";
 import { labelSpeakers, type Speaker } from "../clinical/roles";
 import { sniffAudio, transcribe, TranscribeError, WHISPER_MODEL } from "../clinical/transcribe";
 import type { Deps, Env } from "../env";
@@ -77,6 +78,11 @@ export function consultsRoutes(deps: Deps) {
 
   const getConsult = (env: Env, id: string) =>
     env.DB.prepare(`SELECT ${CONSULT_COLUMNS} FROM consults WHERE id = ?1`).bind(id).first<ConsultRow>();
+  /** Owner identity, only to strip it from what the model sees. */
+  const ownerOf = async (env: Env, appointmentId: string) =>
+    (await env.DB.prepare("SELECT c.name, c.email FROM appointments a JOIN contacts c ON c.id = a.contact_id WHERE a.id = ?1")
+      .bind(appointmentId)
+      .first<{ name: string | null; email: string | null }>()) ?? { name: null, email: null };
 
   // Appointments the doctor can open today: confirmed (deposit captured) or already in consult.
   app.get("/appointments", async (c) => {
@@ -202,7 +208,8 @@ export function consultsRoutes(deps: Deps) {
     let labeled = false;
     if (env.ANTHROPIC_API_KEY && result.segments.length > 0) {
       try {
-        labels = await labelSpeakers(deps.fetch, env.ANTHROPIC_API_KEY, result.segments.map((s) => ({ idx: s.idx, text: s.text })));
+        const owner = await ownerOf(env, consult.appointment_id);
+        labels = await labelSpeakers(deps.fetch, env.ANTHROPIC_API_KEY, result.segments.map((s) => ({ idx: s.idx, text: redactOwner(s.text, owner) })));
         labeled = labels.size > 0;
       } catch (e) {
         log("label_speakers_failed", { consult_id: id.data, error: errName(e) });
@@ -250,10 +257,13 @@ export function consultsRoutes(deps: Deps) {
     const pet = await env.DB.prepare("SELECT p.species, p.breed FROM appointments a JOIN pets p ON p.id = a.pet_id WHERE a.id = ?1")
       .bind(consult.appointment_id)
       .first<{ species: string; breed: string | null }>();
-    const { results: segments } = await env.DB.prepare("SELECT idx, speaker, text FROM transcript_segments WHERE consult_id = ?1 ORDER BY idx ASC")
+    const { results: stored } = await env.DB.prepare("SELECT idx, speaker, text FROM transcript_segments WHERE consult_id = ?1 ORDER BY idx ASC")
       .bind(id.data)
       .all<{ idx: number; speaker: string; text: string }>();
-    if (segments.length === 0) return c.json({ error: "no transcript" }, 409);
+    if (stored.length === 0) return c.json({ error: "no transcript" }, 409);
+    // The model (and the grounding check, so quotes stay consistent) see the redacted text; D1 keeps the original.
+    const owner = await ownerOf(env, consult.appointment_id);
+    const segments = stored.map((s) => ({ ...s, text: redactOwner(s.text, owner) }));
     // Catalog WITHOUT prices; the deposit is not a consult item.
     const { results: catalog } = await env.DB.prepare(
       "SELECT id, name, category FROM catalog_items WHERE active = 1 AND category <> 'anticipo' ORDER BY category, name",
