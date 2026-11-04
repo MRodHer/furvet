@@ -103,7 +103,7 @@ export async function plainExplanation(
   for (let attempt = 0; attempt < 2; attempt += 1) {
     let text: string;
     try {
-      const res = await askClaude(fetchImpl, apiKey, { system: SYSTEM, messages, tools: [TOOL], toolChoice: { type: "tool", name: TOOL.name }, maxTokens: 600, temperature: 0 });
+      const res = await askClaude(fetchImpl, apiKey, { system: SYSTEM, messages, tools: [TOOL], toolChoice: { type: "tool", name: TOOL.name }, maxTokens: 600 });
       const block = res.content.find((b) => b.type === "tool_use");
       const parsed = Out.safeParse(block?.type === "tool_use" ? block.input : undefined);
       if (!parsed.success) throw new Error("bad tool output");

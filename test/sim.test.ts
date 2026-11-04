@@ -178,4 +178,28 @@ describe("chat simulator + agent (E11, E13, E14, agent guards)", () => {
     expect(msgs.messages).toHaveLength(2);
     expect(msgs.consent.owner_consent_version).toBe("v1-2026-11-04");
   });
+  it("model body: the request never carries `temperature` (the model rejects it with 400)", async () => {
+    const session = crypto.randomUUID();
+    const { app, calls } = makeApp({ [PP.claude]: claudeScript([endTurn("hola")]) });
+    await chat(app, session, "hola");
+    const bodies = calls.filter((c) => c.key === PP.claude).map((c) => JSON.parse(c.body) as Record<string, unknown>);
+    expect(bodies).toHaveLength(1);
+    expect(bodies[0]).not.toHaveProperty("temperature");
+  });
+
+  it("agent_error logs the model HTTP status (no body, no PII) and the bot stays silent", async () => {
+    const session = crypto.randomUUID();
+    const { app } = makeApp({ [PP.claude]: () => json({ type: "error", error: { type: "invalid_request_error", message: "temperature is deprecated for this model." } }, 400) });
+    const logs = captureLogs();
+    try {
+      expect(await (await chat(app, session, "mi correo es laura@example.com")).json()).toEqual({ reply: null, escalated: false });
+    } finally {
+      logs.restore();
+    }
+    const line = logs.lines.find((l) => l.includes('"event":"agent_error"'));
+    expect(line).toBeDefined();
+    expect(JSON.parse(line!)).toMatchObject({ error: "ClaudeError", status: 400 });
+    expect(line).not.toContain("deprecated");
+    assertNoPii(logs.lines);
+  });
 });

@@ -42,7 +42,6 @@ export async function fillConsult(
     tools: [FILL_CONSULT_TOOL],
     toolChoice: { type: "tool", name: FILL_CONSULT_TOOL.name },
     maxTokens: MAX_TOKENS,
-    temperature: 0,
   });
   const call = res.content.find((b) => b.type === "tool_use");
   const parsed = ConsultDraft.safeParse(call && "input" in call ? call.input : null);

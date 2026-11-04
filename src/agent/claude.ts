@@ -47,7 +47,6 @@ export interface AskClaudeInput {
   tools?: ToolDef[];
   toolChoice?: { type: "tool"; name: string } | { type: "auto" };
   maxTokens: number;
-  temperature?: number;
 }
 
 export async function askClaude(
@@ -70,7 +69,6 @@ export async function askClaude(
       messages: input.messages,
       ...(input.tools ? { tools: input.tools } : {}),
       ...(input.toolChoice ? { tool_choice: input.toolChoice } : {}),
-      ...(input.temperature !== undefined ? { temperature: input.temperature } : {}),
     }),
   });
   if (!res.ok) throw new ClaudeError("claude call failed", res.status);
