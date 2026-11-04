@@ -83,7 +83,7 @@ describe("images (V15, D.6)", () => {
 
     // After approval: a consult with 0 images (so the 409 comes from the bill, not from the position UNIQUE).
     const approved = await seedConsult();
-    await env.DB.prepare("INSERT INTO consult_bills (consult_id, approval_id, total_cents, deposit_cents, balance_cents, approved_by) VALUES (?1, ?2, 1, 0, 1, 'val')").bind(approved.consult, crypto.randomUUID()).run();
+    await env.DB.prepare("INSERT INTO consult_bills (consult_id, approval_id, total_cents, deposit_cents, balance_cents, approved_by, explanation, explanation_source) VALUES (?1, ?2, 1, 0, 1, 'val', 'x', 'template')").bind(approved.consult, crypto.randomUUID()).run();
     expect((await app.request(`/api/v1/consults/${approved.consult}/images`, { method: "POST", headers: doctorHeaders(), body: multipart(fakeJpeg(), "late.jpg") }, doctorEnv())).status).toBe(409);
     expect(await count("report_images", "consult_id = ?1", approved.consult)).toBe(0);
   });

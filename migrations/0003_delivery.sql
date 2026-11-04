@@ -10,6 +10,17 @@ CREATE TABLE consult_bills (
   deposit_cents INTEGER NOT NULL CHECK (deposit_cents >= 0),
   balance_cents INTEGER NOT NULL CHECK (balance_cents >= 0 AND balance_cents = max(total_cents - deposit_cents, 0)),
   approved_by TEXT NOT NULL CHECK (length(approved_by) <= 120),
+  -- The plain-language explanation is stored at approval and only reaches the owner after a
+  -- second, explicit click (explanation_releases). Immutable here: what the doctor saw is what goes out.
+  explanation TEXT NOT NULL CHECK (length(explanation) BETWEEN 1 AND 2000),
+  explanation_source TEXT NOT NULL CHECK (explanation_source IN ('ai', 'template')),
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+);
+
+-- Second approval ("Enviar al dueño"): one row per consult, by PRIMARY KEY, so it happens once.
+CREATE TABLE explanation_releases (
+  consult_id TEXT PRIMARY KEY REFERENCES consult_bills(consult_id),
+  released_by TEXT NOT NULL CHECK (length(released_by) <= 120),
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 );
 
@@ -30,6 +41,10 @@ CREATE INDEX idx_bill_lines_consult_id ON bill_lines (consult_id, id);
 CREATE TRIGGER consult_bills_no_update BEFORE UPDATE ON consult_bills
 BEGIN SELECT RAISE(ABORT, 'append-only'); END;
 CREATE TRIGGER consult_bills_no_delete BEFORE DELETE ON consult_bills
+BEGIN SELECT RAISE(ABORT, 'append-only'); END;
+CREATE TRIGGER explanation_releases_no_update BEFORE UPDATE ON explanation_releases
+BEGIN SELECT RAISE(ABORT, 'append-only'); END;
+CREATE TRIGGER explanation_releases_no_delete BEFORE DELETE ON explanation_releases
 BEGIN SELECT RAISE(ABORT, 'append-only'); END;
 CREATE TRIGGER bill_lines_no_update BEFORE UPDATE ON bill_lines
 BEGIN SELECT RAISE(ABORT, 'append-only'); END;

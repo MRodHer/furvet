@@ -89,7 +89,17 @@
       <form id="soap" autocomplete="off"></form>
       <h3>Descartado por falta de sustento</h3>
       <ul id="discarded"><li class="note">Nada todavía.</li></ul>
-      <div class="row" style="margin-top:12px"><button id="approveBtn" type="button" disabled>Aprobar y cobrar saldo</button> <span id="approveState" class="note"></span></div>
+      <div class="row" style="margin-top:12px"><button id="approveBtn" type="button" disabled>Aprobar consulta</button> <span id="approveState" class="note"></span></div>
+    </section>
+    <section class="card hidden" id="deliveryCard" aria-labelledby="h-delivery">
+      <h2 id="h-delivery">6. Entrega al dueño</h2>
+      <p class="note">La receta ya salió al chat al aprobar. Lo escrito por la IA sólo llega al dueño si usted lo envía.</p>
+      <h3>Explicación en palabras sencillas <span id="explainSource" class="note"></span></h3>
+      <p id="explainText" style="white-space:pre-wrap"></p>
+      <div class="row"><button id="sendExplainBtn" type="button" disabled>Enviar al dueño</button> <span id="sendExplainState" class="note"></span></div>
+      <h3>Saldo</h3>
+      <p id="billLine"></p>
+      <div class="row"><button id="chargeBtn" type="button" disabled>Generar cobro</button> <span id="chargeState" class="note"></span></div>
     </section>
   </div>
 </main>

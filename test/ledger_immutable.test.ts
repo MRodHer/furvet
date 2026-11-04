@@ -59,7 +59,7 @@ describe("V18-C: bill snapshot is append-only", () => {
     const item = crypto.randomUUID();
     await env.DB.batch([
       env.DB.prepare("INSERT INTO catalog_items (id, sku, name, category, price_cents) VALUES (?1, ?1, 'x', 'otro', 100)").bind(item),
-      env.DB.prepare("INSERT INTO consult_bills (consult_id, approval_id, total_cents, deposit_cents, balance_cents, approved_by) VALUES (?1, ?2, 100, 0, 100, 'val')").bind(consult, crypto.randomUUID()),
+      env.DB.prepare("INSERT INTO consult_bills (consult_id, approval_id, total_cents, deposit_cents, balance_cents, approved_by, explanation, explanation_source) VALUES (?1, ?2, 100, 0, 100, 'val', 'x', 'template')").bind(consult, crypto.randomUUID()),
       env.DB.prepare("INSERT INTO bill_lines (consult_id, catalog_item_id, name, quantity, unit_price_cents, line_total_cents, source) VALUES (?1, ?2, 'x', 1, 100, 100, 'doctor_added')").bind(consult, item),
     ]);
     for (const sql of [

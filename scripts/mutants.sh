@@ -81,4 +81,9 @@ run_mutant "consent timestamp overwritable" src/routes/sim.ts \
   's/WHERE id = ?3 AND owner_consent_at IS NULL/WHERE id = ?3/' test/sim.test.ts || status=1
 run_mutant "post-model human re-check removed" src/agent/run.ts \
   's/if (await humanHasChat(ctx, await recentHistory(env, conversationId))) return null;/if (false) return null;/' test/sim.test.ts || status=1
+# ---- delivery C.6b: deferred balance order + one-shot explanation release ----
+run_mutant "pay-link message sent without the claim guard" src/routes/approve.ts \
+  's/...messageInserts(env.DB, consult.conversation_id, text, "changes() = 1"),/...messageInserts(env.DB, consult.conversation_id, text),/' test/approve.test.ts || status=1
+run_mutant "explanation release guard removed (second click sends again)" src/routes/approve.ts \
+  's/(revisada por el médico):\\n${bill.explanation}`, "changes() = 1"),/(revisada por el médico):\\n${bill.explanation}`),/; s/if (await env.DB.prepare("SELECT 1 AS x FROM explanation_releases WHERE consult_id = ?1").bind(consult.id).first()) return c.json({ error: "already sent" }, 409);//' test/approve.test.ts || status=1
 exit $status

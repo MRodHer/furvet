@@ -94,7 +94,38 @@
     if (hasTranscript) { renderTranscript(data.segments); renderDraft(data.draft); }
     $("approveBtn").disabled = !data.draft || consult.status !== "drafted";
     if (data.approved_version_id) $("approveState").textContent = "Ya aprobada.";
+    await renderDelivery();
   }
+
+  // ---------- 6. delivery: explanation release + balance charge (both one-shot on the server) ----------
+  const money = (cents) => `$${(cents / 100).toFixed(2)}`;
+  async function renderDelivery() {
+    const { ok, data } = await api(`/${consultId}/delivery`);
+    const show = ok && data.approved;
+    $("deliveryCard").classList.toggle("hidden", !show);
+    if (!show) return;
+    $("explainText").textContent = data.explanation;
+    $("explainSource").textContent = data.explanation_source === "ai" ? "(redactada por IA a partir de lo aprobado)" : "(plantilla fija, sin IA)";
+    const sent = !!data.explanation_sent_at;
+    $("sendExplainBtn").disabled = sent;
+    $("sendExplainState").textContent = sent ? `Enviada el ${new Date(data.explanation_sent_at).toLocaleString("es-MX")}.` : "Aún no enviada.";
+    $("billLine").textContent = `Total ${money(data.total_cents)} − anticipo ${money(data.deposit_cents)} = saldo ${money(data.balance_cents)}`;
+    const charged = !!data.charge;
+    $("chargeBtn").disabled = charged || data.balance_cents === 0;
+    $("chargeState").textContent = data.balance_cents === 0 ? "Sin saldo: informe ya liberado." : charged ? `Liga enviada al dueño (estado: ${data.charge.status}).` : "La liga de pago aún no se ha generado.";
+  }
+  $("sendExplainBtn").addEventListener("click", async () => {
+    $("sendExplainBtn").disabled = true; $("sendExplainState").textContent = "Enviando…";
+    const { ok, status, data } = await api(`/${consultId}/send-explanation`, { method: "POST" });
+    if (!ok) $("sendExplainState").textContent = `No se envió (${status}): ${data.error || ""}`;
+    await renderDelivery();
+  });
+  $("chargeBtn").addEventListener("click", async () => {
+    $("chargeBtn").disabled = true; $("chargeState").textContent = "Generando…";
+    const { ok, status, data } = await api(`/${consultId}/charge`, { method: "POST" });
+    if (!ok) { $("chargeState").textContent = `No se generó (${status}): ${data.error || ""}`; $("chargeBtn").disabled = false; return; }
+    await renderDelivery();
+  });
 
   // ---------- 2. consent ----------
   $("doctorBox").addEventListener("change", () => { $("doctorConsentBtn").disabled = !$("doctorBox").checked; });
@@ -289,7 +320,7 @@
     $("approveBtn").disabled = true; $("approveState").textContent = "Enviando…";
     const { ok, status, data } = await api(`/${consultId}/approve`, { method: "POST", body: JSON.stringify(collect()) });
     if (!ok) { $("approveState").textContent = `No se aprobó (${status}): ${data.error || ""}${data.issues ? " · " + JSON.stringify(data.issues) : ""}`; $("approveBtn").disabled = false; return; }
-    $("approveState").textContent = "Aprobada. Receta enviada al dueño; informe al confirmarse el saldo.";
+    $("approveState").textContent = "Aprobada. Receta enviada al dueño. Revise abajo la explicación y genere el cobro.";
     await refresh();
   });
 

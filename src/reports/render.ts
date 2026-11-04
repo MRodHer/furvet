@@ -70,13 +70,14 @@ export function rxBlocks(body: ApprovedConsult, h: ReportHeader): Block[] {
 }
 
 /** Full report: SOAP, vitals, exam, vaccines, rx, plain explanation, images. */
-export function reportBlocks(body: ApprovedConsult, h: ReportHeader, explanation: string, images: { image: CleanImage; caption: string }[]): Block[] {
+/** `explanation` is null until the doctor releases it ("Enviar al dueño"): the section is then absent. */
+export function reportBlocks(body: ApprovedConsult, h: ReportHeader, explanation: string | null, images: { image: CleanImage; caption: string }[]): Block[] {
   const out: Block[] = [...header(h, "Informe de consulta")];
   const section = (title: string, rows: [string, string | null][]) => {
     const present = rows.filter((r): r is [string, string] => r[1] !== null);
     if (present.length) out.push({ kind: "h2", text: title }, ...present.map(([k, val]) => ({ kind: "p" as const, text: `${k}: ${val}` })));
   };
-  out.push({ kind: "h2", text: "En palabras sencillas" }, { kind: "p", text: explanation });
+  if (explanation) out.push({ kind: "h2", text: "En palabras sencillas" }, { kind: "p", text: explanation });
   const s = body.subjective;
   section("Motivo e historia", [
     ["Motivo", v(s.motivo_consulta)],

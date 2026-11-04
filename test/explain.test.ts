@@ -18,6 +18,9 @@ describe("plain explanation (V14, V8)", () => {
     expect(explanationViolations("tome 50 mg", facts)).toEqual(["50", "50 mg"]);
     expect(explanationViolations("también metronidazol como indicó", facts)).toEqual(["metronidazol"]);
     expect(JSON.stringify(facts)).not.toContain("catalog_item_id");
+    // Length cap: the stored column is bounded, so an over-long text is a violation (→ retry → template).
+    expect(explanationViolations("bien. ".repeat(260), facts)).toEqual(["too_long"]);
+    expect(explanationViolations("bien. ".repeat(240), facts)).toBeNull();
   });
 
   it("V14: an invented dose → one retry → still bad → fixed template without AI (exactly 2 calls)", async () => {

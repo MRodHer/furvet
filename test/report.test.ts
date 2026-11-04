@@ -13,6 +13,11 @@ async function approved(captureValue = "881.00") {
   const res = await made.app.request(`/api/v1/consults/${seeded.consult}/approve`, { method: "POST", headers: doctorHeaders({ "Content-Type": "application/json" }), body: JSON.stringify(body) }, doctorEnv());
   expect(res.status).toBe(201);
   const out = (await res.json()) as { rx_url: string; report_url: string; balance_cents: number };
+  // M6-b4: before «Generar cobro» the report gate is a 402 WITHOUT a pay link, never a 200.
+  const early = await made.app.request(new URL(out.report_url).pathname, {}, doctorEnv());
+  expect(early.status).toBe(402);
+  expect(await early.text()).not.toContain("sandbox.paypal.com");
+  expect((await made.app.request(`/api/v1/consults/${seeded.consult}/charge`, { method: "POST", headers: doctorHeaders() }, doctorEnv())).status).toBe(201);
   const charge = await env.DB.prepare("SELECT id, paypal_order_id FROM charges WHERE consult_id = ?1").bind(seeded.consult).first<{ id: string; paypal_order_id: string }>();
   const msgCount = async () => (await env.DB.prepare("SELECT COUNT(*) AS n FROM messages WHERE conversation_id = ?1").bind(seeded.conv).first<{ n: number }>())!.n;
   const get = (url: string) => made.app.request(new URL(url).pathname, {}, doctorEnv());

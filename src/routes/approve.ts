@@ -1,8 +1,11 @@
 // Doctor-only routes of the delivery step (mounted under /api/v1/consults, behind doctorAuth):
 //   POST /:id/bill-preview  — lines with catalog prices, no writes
 //   POST /:id/images        — report images (signature-sniffed, metadata stripped, R2)
-//   POST /:id/approve       — ONE approval per consult: bill snapshot + rx to the chat (always)
-//                             + balance order (if any) + PDFs in R2, all in one D1 batch
+//   POST /:id/approve       — ONE approval per consult: bill snapshot + rx to the chat (always,
+//                             never waiting on PayPal) + PDFs in R2, all in one D1 batch
+//   POST /:id/charge        — "Generar cobro": the balance order, idempotent per consult
+//   POST /:id/send-explanation — "Enviar al dueño": releases the AI explanation, once
+//   GET  /:id/delivery      — read model for the console
 import { Hono } from "hono";
 import { doctorAuth } from "../auth";
 import { buildLines, computeBill, BillingError, type Bill, type BillLine, type CatalogRow } from "../billing";
@@ -21,6 +24,16 @@ import { leafSource, leafValue, prescriptionLines, reportBlocks, rxBlocks, urgen
 
 const CONSULT_SKU = "CONSULTA-GENERAL";
 const MAX_BODY_BYTES = 256 * 1024;
+
+interface BillRow {
+  approval_id: string;
+  total_cents: number;
+  deposit_cents: number;
+  balance_cents: number;
+  explanation: string;
+  explanation_source: "ai" | "template";
+  created_at: string;
+}
 
 interface ConsultRow {
   id: string;
@@ -139,6 +152,22 @@ export function approveRoutes(deps: Deps, paypalFor: (env: Env) => PayPalClient 
     return c.json({ id, position, mime: image.mime, bytes: image.bytes.length }, 201);
   });
 
+  /** Renders report.pdf into R2 (explanation null until released). Same key: a re-render overwrites. */
+  async function putReport(env: Env, consult: ConsultRow, approvalId: string, body: ApprovedConsult, explanation: string | null, byAi: boolean, approvedAt: string) {
+    const { results: imageRows } = await env.DB.prepare("SELECT r2_key, caption FROM report_images WHERE consult_id = ?1 ORDER BY position").bind(consult.id).all<{ r2_key: string; caption: string }>();
+    const images: { image: CleanImage; caption: string }[] = [];
+    for (const row of imageRows) {
+      const obj = await env.FILES.get(row.r2_key);
+      if (obj) images.push({ image: cleanImage(new Uint8Array(await obj.arrayBuffer())), caption: row.caption });
+    }
+    const header: ReportHeader = { explanationByAi: byAi && explanation !== null, clinicName: env.CLINIC_NAME, doctorName: env.DOCTOR_DISPLAY_NAME, licenseLabel: env.DOCTOR_LICENSE_LABEL, petName: consult.pet_name, approvedAt };
+    await env.FILES.put(`reports/${approvalId}/report.pdf`, buildPdf(reportBlocks(body, header, explanation, images)), { httpMetadata: { contentType: "application/pdf" } });
+    return header;
+  }
+
+  const loadBill = (env: Env, consultId: string) =>
+    env.DB.prepare("SELECT approval_id, total_cents, deposit_cents, balance_cents, explanation, explanation_source, created_at FROM consult_bills WHERE consult_id = ?1").bind(consultId).first<BillRow>();
+
   app.post("/:id/approve", async (c) => {
     const env = c.env;
     const consult = await loadConsult(env, c.req.param("id"));
@@ -147,12 +176,11 @@ export function approveRoutes(deps: Deps, paypalFor: (env: Env) => PayPalClient 
     const p = await prepare(c, consult);
     if ("error" in p) return c.json(p, p.status);
     const { body, bill, raw } = p;
-    const paypal = paypalFor(env);
     if (bill.balanceCents > intVar(env.MAX_CHARGE_CENTS, 0)) return c.json({ error: "balance over cap" }, 422);
-    // Owner links must be absolute even when the balance is 0, so the base URL is required always.
-    if (!env.PUBLIC_BASE_URL || (bill.balanceCents > 0 && !paypal)) {
-      log("charge_refused", { reason: "paypal_not_configured", consult_id: consult.id });
-      return c.json({ error: "payments not configured" }, 503);
+    // Owner links must be absolute. PayPal is NOT needed here: the approval never waits on it (M6-b).
+    if (!env.PUBLIC_BASE_URL) {
+      log("approve_refused", { reason: "public_base_url_missing", consult_id: consult.id });
+      return c.json({ error: "delivery not configured" }, 503);
     }
     const base = env.PUBLIC_BASE_URL;
     const now = deps.now();
@@ -160,38 +188,11 @@ export function approveRoutes(deps: Deps, paypalFor: (env: Env) => PayPalClient 
     const rx = await newToken();
     const report = await newToken();
 
-    // Content first (slow network calls), then ONE atomic batch. A lost race leaves orphan R2
-    // objects under an approval_id nobody references — harmless.
+    // Content first (slow calls), then ONE atomic batch. A lost race leaves orphan R2 objects
+    // under an approval_id nobody references — harmless. The explanation is stored, not sent.
     const explanation = await plainExplanation(deps.fetch, env.ANTHROPIC_API_KEY, body, consult.id);
-    const { results: imageRows } = await env.DB.prepare("SELECT r2_key, caption FROM report_images WHERE consult_id = ?1 ORDER BY position").bind(consult.id).all<{ r2_key: string; caption: string }>();
-    const images: { image: CleanImage; caption: string }[] = [];
-    for (const row of imageRows) {
-      const obj = await env.FILES.get(row.r2_key);
-      if (obj) images.push({ image: cleanImage(new Uint8Array(await obj.arrayBuffer())), caption: row.caption });
-    }
-    const header: ReportHeader = { explanationByAi: explanation.source === "ai", clinicName: env.CLINIC_NAME, doctorName: env.DOCTOR_DISPLAY_NAME, licenseLabel: env.DOCTOR_LICENSE_LABEL, petName: consult.pet_name, approvedAt: now.toISOString() };
-    await Promise.all([
-      env.FILES.put(`reports/${approvalId}/rx.pdf`, buildPdf(rxBlocks(body, header)), { httpMetadata: { contentType: "application/pdf" } }),
-      env.FILES.put(`reports/${approvalId}/report.pdf`, buildPdf(reportBlocks(body, header, explanation.text, images)), { httpMetadata: { contentType: "application/pdf" } }),
-    ]);
-
-    let order: { orderId: string; approveUrl: string; raw: unknown } | null = null;
-    // Deterministic, like PayPal-Request-Id: a retry gets the SAME order back from PayPal with the
-    // same custom_id, so the ledger row and the order always agree (a random id would orphan the order).
-    const chargeId = `balance-${consult.id}`;
-    if (bill.balanceCents > 0 && paypal) {
-      order = await paypal.createOrder({
-        amountCents: bill.balanceCents,
-        currency: env.CURRENCY,
-        customId: chargeId,
-        requestId: `balance-${consult.id}`,
-        description: `Saldo de consulta veterinaria (${consult.pet_name})`.slice(0, 127),
-        returnUrl: `${base}/paypal-return.html`,
-        cancelUrl: `${base}/paypal-cancel.html`,
-        items: bill.lines.map((l) => ({ name: l.name, quantity: l.quantity, unitCents: l.unitPriceCents })),
-        discountCents: bill.depositCents,
-      });
-    }
+    const header = await putReport(env, consult, approvalId, body, null, explanation.source === "ai", now.toISOString());
+    await env.FILES.put(`reports/${approvalId}/rx.pdf`, buildPdf(rxBlocks(body, header)), { httpMetadata: { contentType: "application/pdf" } });
 
     const rxText = [
       `Receta de ${consult.pet_name} (aprobada por el médico):`,
@@ -200,7 +201,7 @@ export function approveRoutes(deps: Deps, paypalFor: (env: Env) => PayPalClient 
       "",
       `Receta en PDF: ${base}/rx/${rx.token}`,
       bill.balanceCents > 0
-        ? `Informe completo: ${base}/r/${report.token} (se libera al confirmarse el pago del saldo ${formatCents(bill.balanceCents, env.CURRENCY)}${order ? `: ${order.approveUrl}` : ""})`
+        ? `Informe completo: ${base}/r/${report.token} (se libera al confirmarse el pago del saldo ${formatCents(bill.balanceCents, env.CURRENCY)}; la clínica le enviará la liga de pago)`
         : `Informe completo: ${base}/r/${report.token}`,
     ].join("\n");
 
@@ -212,14 +213,9 @@ export function approveRoutes(deps: Deps, paypalFor: (env: Env) => PayPalClient 
         `INSERT INTO consult_versions (id, consult_id, kind, body, grounding, created_by)
          SELECT ?1, ?2, 'approved', ?3, ?4, ?5 WHERE NOT EXISTS (SELECT 1 FROM consult_bills WHERE consult_id = ?2) ON CONFLICT DO NOTHING`,
       ).bind(approvalId, consult.id, JSON.stringify(raw), JSON.stringify({ approved_by_doctor: true, explanation: explanation.source }), env.DOCTOR_DEMO_USER ?? "doctor"),
-      db.prepare("INSERT INTO consult_bills (consult_id, approval_id, total_cents, deposit_cents, balance_cents, approved_by) VALUES (?1, ?2, ?3, ?4, ?5, ?6) ON CONFLICT DO NOTHING").bind(
-        consult.id,
-        approvalId,
-        bill.totalCents,
-        bill.depositCents,
-        bill.balanceCents,
-        env.DOCTOR_DEMO_USER ?? "doctor",
-      ),
+      db.prepare(
+        "INSERT INTO consult_bills (consult_id, approval_id, total_cents, deposit_cents, balance_cents, approved_by, explanation, explanation_source) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8) ON CONFLICT DO NOTHING",
+      ).bind(consult.id, approvalId, bill.totalCents, bill.depositCents, bill.balanceCents, env.DOCTOR_DEMO_USER ?? "doctor", explanation.text, explanation.source),
       ...bill.lines.map((l) =>
         db
           .prepare(`INSERT INTO bill_lines (consult_id, catalog_item_id, name, quantity, unit_price_cents, line_total_cents, source) SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7 WHERE ${guard(8)}`)
@@ -231,17 +227,6 @@ export function approveRoutes(deps: Deps, paypalFor: (env: Env) => PayPalClient 
       // balance 0 = the report is released right away, so the consult is already delivered.
       db.prepare(`UPDATE consults SET status = ?3 WHERE id = ?1 AND status NOT IN ('approved', 'delivered') AND ${guard(2)}`).bind(consult.id, approvalId, bill.balanceCents > 0 ? "approved" : "delivered"),
     ];
-    if (order) {
-      stmts.push(
-        ...claimChargeStatements(
-          db,
-          { id: chargeId, kind: "balance", consultId: consult.id, conversationId: consult.conversation_id, paypalOrderId: order.orderId, paypalRequestId: `balance-${consult.id}`, amountCents: bill.balanceCents, currency: env.CURRENCY, approveUrl: order.approveUrl },
-          order.raw,
-          guard(11),
-          approvalId,
-        ),
-      );
-    }
     let results: D1Result[];
     try {
       results = await db.batch(stmts);
@@ -250,16 +235,98 @@ export function approveRoutes(deps: Deps, paypalFor: (env: Env) => PayPalClient 
       throw e;
     }
     if ((results[1]?.meta.changes ?? 0) !== 1) return c.json({ error: "already approved" }, 409);
-    if (order && (results[stmts.length - 2]?.meta.changes ?? 0) !== 1) {
-      // The bill and the rx are committed; a balance without its ledger row must be loud, never silent.
-      log("balance_charge_not_recorded", { consult_id: consult.id, charge_id: chargeId });
-      throw new Error("balance charge not recorded");
-    }
     log("consult_approved", { consult_id: consult.id, total_cents: bill.totalCents, deposit_cents: bill.depositCents, balance_cents: bill.balanceCents, lines: bill.lines.length, explanation: explanation.source });
     return c.json(
-      { approval_id: approvalId, ...billJson(bill, env.CURRENCY), approve_url: order?.approveUrl ?? null, rx_url: `${base}/rx/${rx.token}`, report_url: `${base}/r/${report.token}`, explanation: explanation.text, explanation_source: explanation.source },
+      { approval_id: approvalId, ...billJson(bill, env.CURRENCY), rx_url: `${base}/rx/${rx.token}`, report_url: `${base}/r/${report.token}`, explanation: explanation.text, explanation_source: explanation.source },
       201,
     );
+  });
+
+  // "Generar cobro": the balance order, created AFTER the approval so PayPal can never block it.
+  // Idempotent: one `balance` charge per consult (ledger index) with a deterministic id/Request-Id.
+  app.post("/:id/charge", async (c) => {
+    const env = c.env;
+    const consult = await loadConsult(env, c.req.param("id"));
+    if (!consult) return c.json({ error: "not found" }, 404);
+    const bill = await loadBill(env, consult.id);
+    if (!bill) return c.json({ error: "not approved" }, 409);
+    if (bill.balance_cents === 0) return c.json({ error: "nothing to charge" }, 409);
+    const existing = await currentCharge(env.DB, "consult_id", consult.id);
+    if (existing) return c.json({ charge_id: existing.id, status: existing.status, approve_url: existing.approve_url, balance_cents: bill.balance_cents });
+    const paypal = paypalFor(env);
+    if (!paypal || !env.PUBLIC_BASE_URL) {
+      log("charge_refused", { reason: "paypal_not_configured", consult_id: consult.id });
+      return c.json({ error: "payments not configured" }, 503);
+    }
+    const { results: lines } = await env.DB.prepare("SELECT name, quantity, unit_price_cents FROM bill_lines WHERE consult_id = ?1 ORDER BY id").bind(consult.id).all<{ name: string; quantity: number; unit_price_cents: number }>();
+    const chargeId = `balance-${consult.id}`;
+    const order = await paypal.createOrder({
+      amountCents: bill.balance_cents,
+      currency: env.CURRENCY,
+      customId: chargeId,
+      requestId: chargeId,
+      description: `Saldo de consulta veterinaria (${consult.pet_name})`.slice(0, 127),
+      returnUrl: `${env.PUBLIC_BASE_URL}/paypal-return.html`,
+      cancelUrl: `${env.PUBLIC_BASE_URL}/paypal-cancel.html`,
+      items: lines.map((l) => ({ name: l.name, quantity: l.quantity, unitCents: l.unit_price_cents })),
+      discountCents: bill.deposit_cents,
+    });
+    const text = `Liga para pagar el saldo de la consulta de ${consult.pet_name} (${formatCents(bill.balance_cents, env.CURRENCY)}): ${order.approveUrl}\nAl confirmarse el pago recibirá el informe completo.`;
+    // claim (header → event) → message, each statement chained on "the previous one landed".
+    const results = await env.DB.batch([
+      ...claimChargeStatements(env.DB, { id: chargeId, kind: "balance", consultId: consult.id, conversationId: consult.conversation_id, paypalOrderId: order.orderId, paypalRequestId: chargeId, amountCents: bill.balance_cents, currency: env.CURRENCY, approveUrl: order.approveUrl }, order.raw),
+      ...messageInserts(env.DB, consult.conversation_id, text, "changes() = 1"),
+    ]);
+    if ((results[0]?.meta.changes ?? 0) !== 1) {
+      const winner = await currentCharge(env.DB, "consult_id", consult.id);
+      return c.json({ charge_id: winner?.id ?? chargeId, status: winner?.status ?? "created", approve_url: winner?.approve_url ?? null, balance_cents: bill.balance_cents });
+    }
+    log("balance_charge_created", { consult_id: consult.id, charge_id: chargeId, amount_cents: bill.balance_cents });
+    return c.json({ charge_id: chargeId, status: "created", approve_url: order.approveUrl, balance_cents: bill.balance_cents }, 201);
+  });
+
+  // "Enviar al dueño": the doctor has read the plain-language explanation and releases it, once.
+  app.post("/:id/send-explanation", async (c) => {
+    const env = c.env;
+    const consult = await loadConsult(env, c.req.param("id"));
+    if (!consult) return c.json({ error: "not found" }, 404);
+    const bill = await loadBill(env, consult.id);
+    if (!bill) return c.json({ error: "not approved" }, 409);
+    if (await env.DB.prepare("SELECT 1 AS x FROM explanation_releases WHERE consult_id = ?1").bind(consult.id).first()) return c.json({ error: "already sent" }, 409);
+    const version = await env.DB.prepare("SELECT body FROM consult_versions WHERE id = ?1 AND kind = 'approved'").bind(bill.approval_id).first<{ body: string }>();
+    if (!version) throw new Error("approved version missing");
+    const body = ApprovedConsult.parse(JSON.parse(version.body));
+    // The report now carries the explanation (same R2 key, so a race re-renders identical bytes).
+    await putReport(env, consult, bill.approval_id, body, bill.explanation, bill.explanation_source === "ai", bill.created_at);
+    const results = await env.DB.batch([
+      env.DB.prepare("INSERT INTO explanation_releases (consult_id, released_by) VALUES (?1, ?2) ON CONFLICT DO NOTHING").bind(consult.id, env.DOCTOR_DEMO_USER ?? "doctor"),
+      ...messageInserts(env.DB, consult.conversation_id, `Explicación sencilla de la consulta de ${consult.pet_name} (revisada por el médico):\n${bill.explanation}`, "changes() = 1"),
+    ]);
+    if ((results[0]?.meta.changes ?? 0) !== 1) return c.json({ error: "already sent" }, 409);
+    log("explanation_sent", { consult_id: consult.id, source: bill.explanation_source });
+    return c.json({ sent: true }, 201);
+  });
+
+  // Read model for the console after a reload: what was approved, what is still pending.
+  app.get("/:id/delivery", async (c) => {
+    const consult = await loadConsult(c.env, c.req.param("id"));
+    if (!consult) return c.json({ error: "not found" }, 404);
+    const bill = await loadBill(c.env, consult.id);
+    if (!bill) return c.json({ approved: false });
+    const [sent, charge] = await Promise.all([
+      c.env.DB.prepare("SELECT created_at FROM explanation_releases WHERE consult_id = ?1").bind(consult.id).first<{ created_at: string }>(),
+      currentCharge(c.env.DB, "consult_id", consult.id),
+    ]);
+    return c.json({
+      approved: true,
+      total_cents: bill.total_cents,
+      deposit_cents: bill.deposit_cents,
+      balance_cents: bill.balance_cents,
+      explanation: bill.explanation,
+      explanation_source: bill.explanation_source,
+      explanation_sent_at: sent?.created_at ?? null,
+      charge: charge ? { status: charge.status, approve_url: charge.approve_url } : null,
+    });
   });
 
   return app;

@@ -41,7 +41,10 @@ export function approvedValues(node: unknown): Json {
 const squash = (s: string) => s.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/\s+/g, "");
 
 /** Null when the text is fully backed by the JSON; else the offending tokens. */
+export const MAX_EXPLANATION_CHARS = 1500;
+
 export function explanationViolations(text: string, facts: Json): string[] | null {
+  if (text.length > MAX_EXPLANATION_CHARS) return ["too_long"];
   const factsText = JSON.stringify(facts);
   const allowedNumbers = new Set(numbersIn(factsText));
   const bad = numbersIn(text).filter((n) => !allowedNumbers.has(n));
