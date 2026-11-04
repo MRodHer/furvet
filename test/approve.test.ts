@@ -352,6 +352,18 @@ describe("«Enviar al dueño» (second approval of the AI explanation)", () => {
     expect((await sendExplanation(app, consult)).status).toBe(409);
     expect((await messages(conv)).results).toHaveLength(0);
   });
+
+  it("ratchet E13: the rx message is the doctor's (is_bot = 0) → an owner chat right after approval gets no bot reply", async () => {
+    const { consult, conv, appt, ids } = await seedConsult();
+    await depositCaptured(appt, 20000);
+    const { app, count: calls } = makeApp(fakes());
+    expect((await post(app, consult, approvedBody(ids))).status).toBe(201);
+    expect(await count("messages", "conversation_id = ?1 AND direction = 'outbound' AND is_bot = 0", conv)).toBeGreaterThan(0);
+    const before = calls(PP.claude);
+    const chat = await app.request("/api/v1/sim/chat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ session_id: conv, text: "¿y ahora qué hago?" }) }, env);
+    expect(await chat.json()).toEqual({ reply: null, escalated: false });
+    expect(calls(PP.claude)).toBe(before);
+  });
 });
 
 describe("bill breakdown, editable quantities and owner-sourced medications (BB1–BB4)", () => {

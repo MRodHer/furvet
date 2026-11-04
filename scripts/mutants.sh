@@ -56,6 +56,12 @@ run_mutant "clinic time shown in UTC (chat says 4:00 am for a 10:00 am slot)" sr
   's/timeZone: CLINIC_TZ/timeZone: "UTC"/' test/time.test.ts || status=1
 run_mutant "fill prompt loses the dosis rule (model writes «una tableta», receta stays incomplete)" src/clinical/fill.ts \
   '/En dosis copia LITERALMENTE/d' test/fill.test.ts || status=1
+run_mutant "claude catch-all excludes only text (malformed tool_use passes as opaque)" src/agent/claude.ts \
+  's/t !== "text" \&\& t !== "tool_use"/t !== "text"/' test/sim.test.ts || status=1
+run_mutant "messageInserts default is_bot 1 (doctor-approved rx read as the bot: agent keeps talking over the doctor)" src/delivery.ts \
+  's/isBot: 0 | 1 = 0/isBot: 0 | 1 = 1/' test/approve.test.ts || status=1
+run_mutant "deposit message guarded by the event INSERT instead of the appointment UPDATE" src/routes/webhook.ts \
+  "/UPDATE appointments SET status = 'confirmed'/{h;d}; /DEPOSIT_CONFIRMED_TEXT, \"changes() = 1\"/G" test/webhook.test.ts || status=1
 # ---- delivery (Constructora C, V20-C) ----
 run_mutant "bill ignores the captured deposit" src/billing.ts \
   's/balanceCents: Math.max(totalCents - depositCents, 0)/balanceCents: Math.max(totalCents, 0)/' test/billing.test.ts || status=1

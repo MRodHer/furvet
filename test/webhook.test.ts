@@ -250,6 +250,16 @@ describe("PayPal webhook (E1-E4, E6, E14, D.1)", () => {
       expect(await count("messages", "conversation_id = ?1 AND text = ?2", conv, DEPOSIT_CONFIRMED_TEXT)).toBe(0);
     });
 
+    it("ratchet D2b: the appointment is no longer pending_deposit when the capture lands → captured event, confirmed stays, 0 messages (the guard hangs off the UPDATE, not the event INSERT)", async () => {
+      const { appt, chargeId, orderId, botMsgs, events, apptStatus } = await seedDeposit();
+      await env.DB.prepare("UPDATE appointments SET status = 'confirmed' WHERE id = ?1").bind(appt).run();
+      const { app } = makeApp(paypalFakes({ captureValue: "200.00" }));
+      expect(await (await post(app, approvedEvent("WH-D2b-pre", orderId, chargeId))).json()).toEqual({ status: "captured" });
+      expect(await events("status = 'captured'")).toBe(1);
+      expect(await apptStatus()).toBe("confirmed");
+      expect(await botMsgs()).toBe(0);
+    });
+
     it("D5: the confirmation is the BOT's message (is_bot = 1): the agent keeps answering the owner right after", async () => {
       const { chargeId, orderId, conv } = await seedDeposit();
       const { app } = makeApp({ ...paypalFakes({ captureValue: "200.00" }), [PP.claude]: endTurn("Te esperamos mañana.") });
