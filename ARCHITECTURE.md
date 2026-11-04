@@ -171,7 +171,7 @@ El orden de comprobación es fijo y se prueba: configuración → autenticación
 - Un único archivo habla con el modelo.
 - El host del proveedor de pagos es el de sandbox y sólo ese.
 - Ningún `catch` vacío.
-- Ningún término de proyectos privados ni de datos internos en `src`, `public`, `migrations`, `test`, `seed.sql`, `wrangler.toml` (lista en el script; se amplía, nunca se acorta).
+- Ningún término de proyectos privados ni de datos internos en `src`, `public`, `migrations`, `test`, `seed.sql`, `wrangler.toml`. Los términos viven en el script sólo como huellas SHA-256 de palabras, pares de palabras y prefijos numéricos con puntos, en minúsculas (el repo es público); la lista se amplía, nunca se acorta, y el guardia se autoprueba en cada corrida con un token aleatorio plantado fuera del repo. Parte identificadores camelCase y fronteras letra/dígito, pero no ve un término pegado en minúsculas dentro de otra palabra ni un prefijo numérico dentro de un número más largo: eso lo cubre la calificadora con su barrido de formas hostiles antes de cada publicación. La historia de git anterior a este guardia conserva los términos en claro; limpiarla es una decisión aparte del dueño del repo.
 
 ### 7.3 Control de mutantes (`scripts/mutants.sh`)
 
