@@ -30,12 +30,14 @@ export async function lookupToken(db: D1Database, token: string, kind: TokenKind
 }
 
 /** Clinic (non-bot) outbound messages, split so each row fits the 4000-char CHECK. */
-export function messageInserts(db: D1Database, conversationId: string, text: string, guardSql = "1 = 1", ...guardBinds: unknown[]) {
+/** `isBot` 1 = the bot speaks (the agent keeps answering afterwards); 0 = a human-approved message
+ *  (the agent's E13 guard then treats the chat as taken by a person for HUMAN_WINDOW_MS). */
+export function messageInserts(db: D1Database, conversationId: string, text: string, guardSql = "1 = 1", guardBinds: unknown[] = [], isBot: 0 | 1 = 0) {
   const chunks: string[] = [];
   for (let i = 0; i < text.length; i += MESSAGE_MAX) chunks.push(text.slice(i, i + MESSAGE_MAX));
   return chunks.map((t) =>
     db
-      .prepare(`INSERT INTO messages (conversation_id, direction, text, is_bot) SELECT ?1, 'outbound', ?2, 0 WHERE ${guardSql}`)
-      .bind(conversationId, t, ...guardBinds),
+      .prepare(`INSERT INTO messages (conversation_id, direction, text, is_bot) SELECT ?1, 'outbound', ?2, ?3 WHERE ${guardSql}`)
+      .bind(conversationId, t, isBot, ...guardBinds),
   );
 }

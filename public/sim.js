@@ -104,4 +104,9 @@
   });
 
   load();
+  // The deposit is paid in another tab; the webhook's confirmation lands in `messages` while this tab is
+  // hidden. Re-read the thread when the owner comes back (no polling: visibility is the signal).
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible") load();
+  });
 })();
