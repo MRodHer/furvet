@@ -80,10 +80,13 @@ export function ageLabel(birthDate: string | null, at: string): string | null {
   if (!birthDate || !/^\d{4}-\d{2}-\d{2}/.test(birthDate)) return null;
   const b = new Date(birthDate.slice(0, 10));
   const a = new Date(at.slice(0, 10));
-  if (Number.isNaN(b.getTime()) || b > a) return null;
+  // An impossible date (2023-02-30) rolls over in Date: refuse it instead of inventing an age.
+  if (Number.isNaN(b.getTime()) || b.toISOString().slice(0, 10) !== birthDate.slice(0, 10) || b > a) return null;
   let months = (a.getUTCFullYear() - b.getUTCFullYear()) * 12 + a.getUTCMonth() - b.getUTCMonth();
   if (a.getUTCDate() < b.getUTCDate()) months -= 1;
-  return months >= 12 ? `${Math.floor(months / 12)} años` : `${months} meses`;
+  const n = months >= 12 ? Math.floor(months / 12) : months;
+  const unit = months >= 12 ? ["año", "años"] : ["mes", "meses"];
+  return `${n} ${n === 1 ? unit[0] : unit[1]}`;
 }
 
 /** Printable A4 rx (common vet layout): clinic letterhead, owner and patient (blank line when unknown), one
@@ -113,6 +116,7 @@ export function rxBlocks(body: ApprovedConsult, h: ReportHeader, d: RxDetails): 
   if (plan) out.push({ kind: "h2", text: "Observaciones" }, { kind: "p", text: plan });
   // Blank line to sign by hand. Nothing is ever embedded here.
   out.push({ kind: "p", text: " " }, { kind: "p", text: "Fecha de revisión: ____ / ____ / ________" }, { kind: "p", text: " " }, { kind: "p", text: `Firma: ______________________________   ${h.doctorName}` });
+  out.push({ kind: "small", text: "Original para el médico: imprimir, firmar y entregar." });
   return [...out, ...footer(h)];
 }
 

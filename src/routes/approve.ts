@@ -20,7 +20,7 @@ import { formatCents } from "../money";
 import type { PayPalClient } from "../paypal";
 import { MAX_EXPLANATION_CHARS, plainExplanation } from "../reports/explain";
 import { buildPdf } from "../reports/pdf";
-import { billTextLines, leafSource, leafValue, prescriptionLines, reportBlocks, rxBlocks, ticketBlocks, urgentLines, type ReportHeader, type RxDetails } from "../reports/render";
+import { billTextLines, leafSource, leafValue, reportBlocks, rxBlocks, ticketBlocks, urgentLines, type ReportHeader, type RxDetails } from "../reports/render";
 
 const CONSULT_SKU = "CONSULTA-GENERAL";
 // The approved snapshot, in BillLine shape: the only price source after approval (never catalog_items again).
@@ -47,7 +47,6 @@ interface ConsultRow {
   breed: string | null;
   sex: string | null;
   birth_date: string | null;
-  owner_name: string; // rx letterhead only; never logged, never in the ticket or the chat
 }
 
 export function approveRoutes(deps: Deps, paypalFor: (env: Env) => PayPalClient | null) {
@@ -56,8 +55,8 @@ export function approveRoutes(deps: Deps, paypalFor: (env: Env) => PayPalClient 
 
   const loadConsult = (env: Env, id: string) =>
     env.DB.prepare(
-      `SELECT c.id, c.status, c.appointment_id, a.conversation_id, p.name AS pet_name, p.species, p.breed, p.sex, p.birth_date, k.name AS owner_name
-       FROM consults c JOIN appointments a ON a.id = c.appointment_id JOIN pets p ON p.id = a.pet_id JOIN contacts k ON k.id = a.contact_id WHERE c.id = ?1`,
+      `SELECT c.id, c.status, c.appointment_id, a.conversation_id, p.name AS pet_name, p.species, p.breed, p.sex, p.birth_date
+       FROM consults c JOIN appointments a ON a.id = c.appointment_id JOIN pets p ON p.id = a.pet_id WHERE c.id = ?1`,
     )
       .bind(id)
       .first<ConsultRow>();
@@ -198,7 +197,9 @@ export function approveRoutes(deps: Deps, paypalFor: (env: Env) => PayPalClient 
     const base = env.PUBLIC_BASE_URL;
     const now = deps.now();
     const approvalId = crypto.randomUUID();
-    const rx = await newToken();
+    // The owner's ticket link. Stored under kind 'rx' (the 0003 CHECK admits only rx/report, no migration):
+    // since the rx is printed by the doctor and never sent, that kind now serves ONLY ticket.pdf (/t).
+    const ticket = await newToken();
     const report = await newToken();
 
     // Content first (slow calls), then ONE atomic batch. A lost race leaves orphan R2 objects
@@ -207,21 +208,24 @@ export function approveRoutes(deps: Deps, paypalFor: (env: Env) => PayPalClient 
     // Second barrier before the column CHECK: a visible refusal, never a 500 from the batch.
     if (explanation.text.length > MAX_EXPLANATION_CHARS) return c.json({ error: "explanation too long" }, 422);
     const header = await putReport(env, consult, approvalId, body, null, explanation.source === "ai", now.toISOString());
-    const rxDetails: RxDetails = { ownerName: consult.owner_name, breed: consult.breed, sex: consult.sex, birthDate: consult.birth_date, clinicAddress: env.CLINIC_ADDRESS, clinicPhone: env.CLINIC_PHONE, clinicEmail: env.CLINIC_EMAIL };
+    // The owner's name is read HERE only (least privilege): it goes to rx.pdf and nowhere else.
+    const owner = await env.DB.prepare("SELECT k.name FROM appointments a JOIN contacts k ON k.id = a.contact_id WHERE a.id = ?1").bind(consult.appointment_id).first<{ name: string }>();
+    const rxDetails: RxDetails = { ownerName: owner?.name ?? "", breed: consult.breed, sex: consult.sex, birthDate: consult.birth_date, clinicAddress: env.CLINIC_ADDRESS, clinicPhone: env.CLINIC_PHONE, clinicEmail: env.CLINIC_EMAIL };
     // Both PDFs land in R2 BEFORE the D1 batch: a failed put means no approval at all, never a half one.
     await env.FILES.put(`reports/${approvalId}/rx.pdf`, buildPdf(rxBlocks(body, header, rxDetails)), { httpMetadata: { contentType: "application/pdf" } });
     await env.FILES.put(`reports/${approvalId}/ticket.pdf`, buildPdf(ticketBlocks(header, bill, env.CURRENCY)), { httpMetadata: { contentType: "application/pdf" } });
 
-    const rxText = [
-      `Receta de ${consult.pet_name} (aprobada por el médico):`,
-      ...prescriptionLines(body),
+    // The owner's message: urgent instructions, the fixed rx notice (the rx itself is printed and signed by
+    // the doctor, never sent: a digital rx could be reprinted), the bill and the ticket link. No rx data, no owner name.
+    const ownerText = [
+      `Consulta de ${consult.pet_name} aprobada por el médico.`,
       ...(urgentLines(body).length ? ["", "INDICACIONES URGENTES:", ...urgentLines(body).map((u) => `• ${u}`)] : []),
+      "La receta te la entrega la doctora impresa y firmada.",
       "",
       "Cuenta:",
       ...billTextLines(bill, env.CURRENCY),
       "",
-      `Receta en PDF: ${base}/rx/${rx.token}`,
-      `Cuenta en PDF: ${base}/t/${rx.token}`,
+      `Cuenta en PDF: ${base}/t/${ticket.token}`,
       bill.balanceCents > 0
         ? `Informe completo: ${base}/r/${report.token} (se libera al confirmarse el pago del saldo ${formatCents(bill.balanceCents, env.CURRENCY)}; la clínica le enviará la liga de pago)`
         : `Informe completo: ${base}/r/${report.token}`,
@@ -243,9 +247,9 @@ export function approveRoutes(deps: Deps, paypalFor: (env: Env) => PayPalClient 
           .prepare(`INSERT INTO bill_lines (consult_id, catalog_item_id, name, quantity, unit_price_cents, line_total_cents, source) SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7 WHERE ${guard(8)}`)
           .bind(consult.id, l.catalogItemId, l.name, l.quantity, l.unitPriceCents, l.lineTotalCents, l.source, approvalId),
       ),
-      tokenInsert(db, rx.hash, consult.id, "rx", now, guard(5), approvalId),
+      tokenInsert(db, ticket.hash, consult.id, "rx", now, guard(5), approvalId),
       tokenInsert(db, report.hash, consult.id, "report", now, guard(5), approvalId),
-      ...messageInserts(db, consult.conversation_id, rxText, guard(4), [approvalId]),
+      ...messageInserts(db, consult.conversation_id, ownerText, guard(4), [approvalId]),
       // balance 0 = the report is released right away, so the consult is already delivered.
       db.prepare(`UPDATE consults SET status = ?3 WHERE id = ?1 AND status NOT IN ('approved', 'delivered') AND ${guard(2)}`).bind(consult.id, approvalId, bill.balanceCents > 0 ? "approved" : "delivered"),
     ];
@@ -259,7 +263,7 @@ export function approveRoutes(deps: Deps, paypalFor: (env: Env) => PayPalClient 
     if ((results[1]?.meta.changes ?? 0) !== 1) return c.json({ error: "already approved" }, 409);
     log("consult_approved", { consult_id: consult.id, total_cents: bill.totalCents, deposit_cents: bill.depositCents, balance_cents: bill.balanceCents, lines: bill.lines.length, explanation: explanation.source });
     return c.json(
-      { approval_id: approvalId, ...billJson(bill, env.CURRENCY), rx_url: `${base}/rx/${rx.token}`, report_url: `${base}/r/${report.token}`, explanation: explanation.text, explanation_source: explanation.source },
+      { approval_id: approvalId, ...billJson(bill, env.CURRENCY), ticket_url: `${base}/t/${ticket.token}`, report_url: `${base}/r/${report.token}`, explanation: explanation.text, explanation_source: explanation.source },
       201,
     );
   });
@@ -350,6 +354,15 @@ export function approveRoutes(deps: Deps, paypalFor: (env: Env) => PayPalClient 
       explanation_sent_at: sent?.created_at ?? null,
       charge: charge ? { status: charge.status, approve_url: charge.approve_url } : null,
     });
+  });
+
+  // The rx is printed and signed by the doctor and never sent to the owner (a digital rx could be reprinted):
+  // doctor credential (route-wide doctorAuth), approved consults only, never cacheable or indexable.
+  app.get("/:id/rx.pdf", async (c) => {
+    const bill = await loadBill(c.env, c.req.param("id"));
+    const obj = bill ? await c.env.FILES.get(`reports/${bill.approval_id}/rx.pdf`) : null;
+    if (!obj) return c.json({ error: "not found" }, 404);
+    return new Response(obj.body, { headers: { "Content-Type": "application/pdf", "Content-Disposition": 'inline; filename="receta.pdf"', "Cache-Control": "no-store", "Referrer-Policy": "no-referrer", "X-Robots-Tag": "noindex, nofollow" } });
   });
 
   return app;

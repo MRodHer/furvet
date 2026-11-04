@@ -132,4 +132,6 @@ run_mutant "billable row for an owner-sourced medication no longer refused (BB3 
   's/if (body.prescription.some((m) => m.owner_sourced \&\& m.catalog_item_id/if (false \&\& body.prescription.some((m) => m.owner_sourced \&\& m.catalog_item_id/' test/approve.test.ts || status=1
 run_mutant "bill messages priced from today's catalog instead of the snapshot (TK4)" src/routes/approve.ts \
   's/SELECT catalog_item_id AS catalogItemId, name, quantity, unit_price_cents AS unitPriceCents,/SELECT catalog_item_id AS catalogItemId, name, quantity, (SELECT price_cents FROM catalog_items ci WHERE ci.id = bill_lines.catalog_item_id) AS unitPriceCents,/' test/approve.test.ts || status=1
+run_mutant "rx link back in the owner's chat (ADENDA 2)" src/routes/approve.ts \
+  's|"La receta te la entrega la doctora impresa y firmada.",|"La receta te la entrega la doctora impresa y firmada.", `Receta en PDF: ${base}/rx/${ticket.token}`,|' test/approve.test.ts || status=1
 exit $status

@@ -68,7 +68,10 @@ describe("POST /approve (V7-C, V8, V9, D.4)", () => {
     expect(calls.filter((c) => c.key === PP.orders)).toHaveLength(0);
     expect(await count("charges", "consult_id = ?1", consult)).toBe(0);
     const rxMsgs = (await messages(conv)).results.map((m) => m.text).join("\n");
-    expect(rxMsgs).toContain("amoxicilina · 250 mg · cada 12 h · 7 días");
+    // ADENDA 2: the rx is never in the chat; the owner gets the fixed notice, urgent instructions and the bill.
+    expect(rxMsgs).toContain("La receta te la entrega la doctora impresa y firmada.");
+    expect(rxMsgs).not.toContain("amoxicilina");
+    expect(rxMsgs).not.toContain("/rx/");
     expect(rxMsgs).not.toContain("sandbox.paypal.com");
 
     const charged = await charge(app, consult);
@@ -95,7 +98,8 @@ describe("POST /approve (V7-C, V8, V9, D.4)", () => {
 
     const msgs = (await messages(conv)).results.map((m) => m.text).join("\n");
     expect(msgs).toContain("INDICACIONES URGENTES");
-    expect(msgs).toContain("/rx/");
+    expect(msgs).not.toContain("/rx/");
+    expect(msgs).toContain("/t/");
     expect(msgs).toContain("881.00");
     expect(msgs).toMatch(/Liga para pagar el saldo.*https:\/\/www\.sandbox\.paypal\.com\//);
     // Second click: same charge and link, no second order, no second message (M6-b idempotency).
@@ -238,7 +242,7 @@ describe("POST /approve (V7-C, V8, V9, D.4)", () => {
     const noPayPal = doctorEnv({ PAYPAL_CLIENT_ID: "" });
     expect((await post(app, consult, approvedBody(ids), noPayPal)).status).toBe(201);
     const msgs = (await messages(conv)).results.map((m) => m.text).join("\n");
-    expect(msgs).toContain("amoxicilina · 250 mg · cada 12 h · 7 días");
+    expect(msgs).toContain("La receta te la entrega la doctora impresa y firmada.");
     expect(msgs).toContain("INDICACIONES URGENTES");
     expect(msgs).not.toContain("sandbox.paypal.com");
     expect(await count("consult_bills", "consult_id = ?1", consult)).toBe(1);
@@ -339,7 +343,7 @@ describe("«Enviar al dueño» (second approval of the AI explanation)", () => {
     expect(out.explanation.length).toBeLessThanOrEqual(2000);
     expect(calls.filter((c) => c.key === PP.claude)).toHaveLength(0);
     expect(await count("consult_bills", "consult_id = ?1", consult)).toBe(1);
-    expect((await messages(conv)).results.map((m) => m.text).join("\n")).toContain("5 mg · cada 8 h · 3 días");
+    expect((await messages(conv)).results.map((m) => m.text).join("\n")).toContain("La receta te la entrega la doctora impresa y firmada."); // ADENDA 2: the rx stays on paper
   });
 
   it("not approved yet → 409 and nothing sent", async () => {
@@ -412,8 +416,11 @@ describe("bill breakdown, editable quantities and owner-sourced medications (BB1
     expect(await env.FILES.head(`reports/${out.approval_id}/rx.pdf`)).not.toBeNull();
     expect(out).toMatchObject({ total_cents: 83050, balance_cents: 63050 });
     expect(await count("bill_lines", "consult_id = ?1 AND catalog_item_id = ?2", consult, ids["MED-AMOXI"])).toBe(0);
-    const rx = (await messages(conv)).results.map((m) => m.text).join("\n");
-    expect(rx).toContain("amoxicilina · 250 mg · cada 12 h · 7 días");
+    const chat = (await messages(conv)).results.map((m) => m.text).join("\n");
+    expect(chat).toContain("La receta te la entrega la doctora impresa y firmada.");
+    const rxPdf = await app.request(`/api/v1/consults/${consult}/rx.pdf`, { headers: doctorHeaders() }, doctorEnv());
+    expect(rxPdf.status).toBe(200);
+    expect(new TextDecoder("latin1").decode(await rxPdf.arrayBuffer())).toContain("1. amoxicilina"); // still prescribed, on paper
     const version = await env.DB.prepare("SELECT body FROM consult_versions WHERE consult_id = ?1 AND kind = 'approved'").bind(consult).first<{ body: string }>();
     expect(JSON.parse(version!.body).prescription[0].owner_sourced).toBe(true);
     expect((await charge(app, consult)).status).toBe(201);
@@ -457,6 +464,39 @@ describe("bill breakdown, editable quantities and owner-sourced medications (BB1
     expect(await count("bill_lines", "consult_id = ?1", consult)).toBe(0);
     expect((await messages(conv)).results).toHaveLength(0);
     expect(calls.length).toBe(0);
+  });
+});
+
+describe("the rx is printed by the doctor, never sent (ADENDA 2)", () => {
+  it("AD2: after approval the chat has no rx link and carries the fixed notice; /rx/<anything> → 404; the doctor's rx.pdf route: 401 without credential, 200 PDF with it, 404 before approval; the ticket token serves ONLY ticket.pdf", async () => {
+    const { consult, conv, ids } = await seedConsult();
+    const { app } = makeApp(fakes());
+    const rxRoute = (headers: Record<string, string> = doctorHeaders()) => app.request(`/api/v1/consults/${consult}/rx.pdf`, { headers }, doctorEnv());
+    expect((await rxRoute()).status).toBe(404); // not approved yet
+    expect((await rxRoute({})).status).toBe(401);
+    const res = await post(app, consult, approvedBody(ids));
+    expect(res.status).toBe(201);
+    const out = (await res.json()) as Record<string, unknown>;
+    expect(out).not.toHaveProperty("rx_url");
+    const ticketToken = String(out.ticket_url).split("/t/")[1]!;
+    const chat = (await messages(conv)).results.map((m) => m.text).join("\n");
+    expect(chat).toContain("La receta te la entrega la doctora impresa y firmada.");
+    expect(chat).not.toMatch(/\/rx\/|Receta en PDF|amoxicilina/);
+    for (const path of [`/rx/${ticketToken}`, "/rx/anything", `/rx/${"A".repeat(43)}`]) expect((await app.request(path, {}, doctorEnv())).status, path).toBe(404);
+    const ticket = await app.request(`/t/${ticketToken}`, {}, doctorEnv());
+    expect(ticket.status).toBe(200);
+    const ticketText = new TextDecoder("latin1").decode(await ticket.arrayBuffer());
+    expect(ticketText).toContain("Cuenta de la consulta");
+    expect(ticketText).not.toContain("Medicamentos");
+    expect((await rxRoute({})).status).toBe(401);
+    const pdf = await rxRoute();
+    expect(pdf.status).toBe(200);
+    expect(pdf.headers.get("content-type")).toBe("application/pdf");
+    expect(pdf.headers.get("cache-control")).toBe("no-store");
+    expect(pdf.headers.get("x-robots-tag")).toBe("noindex, nofollow");
+    const rxText = new TextDecoder("latin1").decode(await pdf.arrayBuffer());
+    expect(rxText).toContain("1. amoxicilina");
+    expect(rxText).toContain("Original para el médico: imprimir, firmar y entregar.");
   });
 });
 

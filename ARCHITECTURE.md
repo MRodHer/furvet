@@ -164,7 +164,7 @@ El orden de comprobación es fijo y se prueba: configuración → autenticación
 - Vitest con el pool de Workers: las pruebas corren **dentro** de workerd con D1 local real y las migraciones aplicadas. Nada se simula de la plataforma.
 - `npm test` = `scripts/checks.sh` **y luego** la suite. Los checks estáticos fallan antes de correr un solo test.
 - Un test por cláusula del contrato de aceptación; el nombre del test lleva el identificador de la cláusula.
-- Medido (feat/bill-breakdown, 2026-11-04): 19 archivos de prueba; 43 mutantes en `scripts/mutants.sh`.
+- Medido (feat/rx-ticket, 2026-11-04): 19 archivos de prueba; 44 mutantes en `scripts/mutants.sh`.
 
 ### 7.2 Checks estáticos (`scripts/checks.sh`)
 
@@ -202,7 +202,7 @@ Las seis sondas de R122 (§13.16) son: firma inválida, replay, monto alterado, 
 3. **Webhook fail-closed**: cuerpo crudo leído una vez → tope de tamaño → las cinco cabeceras del proveedor presentes → verificación remota de la firma debe responder éxito (cualquier error = rechazo) → sólo entonces parsear.
 4. **Idempotencia**: id de evento `UNIQUE`; replay ⇒ 200 sin efecto. Fallo transitorio al capturar ⇒ 503 **sin** sellar el id, para que el reintento del proveedor con el mismo cuerpo capture.
 5. **Ledger append-only**; `balance = SUM` sobre el historial; la vista «actual» se deriva, nunca se guarda.
-6. **El tratamiento no espera al pago.** Aprobar escribe la factura y envía receta e instrucciones urgentes en un batch, sin llamar al proveedor; el enlace de pago se genera después, idempotente (un cargo de saldo por consulta), y llega al chat sólo cuando **esta** petición creó el cargo.
+6. **El tratamiento no espera al pago.** Aprobar escribe la factura y envía las instrucciones urgentes y la cuenta (ticket) en un batch, sin llamar al proveedor; la receta la imprime y firma el médico desde la consola y nunca viaja al dueño (una receta digital se reimprime); el enlace de pago se genera después, idempotente (un cargo de saldo por consulta), y llega al chat sólo cuando **esta** petición creó el cargo.
 7. **Precios desde el servidor**: el cuerpo aprobado lleva ids de catálogo y cantidades; los precios unitarios se copian del catálogo a líneas append-only; total − depósito capturado = saldo. Un catálogo sin precio se rehúsa a cobrar y `/health` lo reporta.
 8. Una orden de pago no es un comprobante fiscal; los precios son montos con impuestos incluidos fijados por la clínica.
 
@@ -271,7 +271,7 @@ Leyenda: 🔴 mecánico (un test, script o restricción lo hace fallar) · 🟡 
 
 | prueba                        | qué hay hoy en el repo (medido)                                                                                                          | regla que la hace pasar por diseño                      |
 | ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------- |
-| Mutación                      | `scripts/mutants.sh`: 43 mutantes rojo/verde con baseline y estado `broken` separado                                                      | R20; §7.3                                               |
+| Mutación                      | `scripts/mutants.sh`: 44 mutantes rojo/verde con baseline y estado `broken` separado                                                      | R20; §7.3                                               |
 | Escaneo de secretos           | `gitleaks` local antes de publicar; `.gitignore` cubre `.env*` y `.dev.vars*`; `checks.sh` veta términos de proyectos privados             | R19; §8                                                 |
 | SAST                          | No existe (ni Semgrep ni CodeQL). Mitigación de diseño: sinks concentrados (un módulo para el modelo, uno para el proveedor de pagos)      | §4.3, R7; **R118**                                      |
 | SCA (dependencias)            | Lockfile versionado; 2 dependencias de producción fijadas sin rango; sin gate automático de CVE                                           | §4.2; **R118**                                          |
