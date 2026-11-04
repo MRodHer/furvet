@@ -1,3 +1,4 @@
+import type { Env } from "../src/env";
 import { env } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
 import { count, DOCTOR_AUTH, json, makeApp, PP, seedConfirmed, withEnv } from "./helpers";
@@ -21,7 +22,7 @@ async function seedTranscribed() {
   return { id, consultItemId: consultItem!.id, ...b };
 }
 
-const fill = (app: ReturnType<typeof makeApp>["app"], id: string, e = env, headers: Record<string, string> = DOCTOR_AUTH) =>
+const fill = (app: ReturnType<typeof makeApp>["app"], id: string, e: Env = env, headers: Record<string, string> = DOCTOR_AUTH) =>
   app.request(`/api/v1/consults/${id}/fill`, { method: "POST", headers }, e);
 
 describe("AI draft with grounding (V7-B, V8-B, V18-B, E12)", () => {

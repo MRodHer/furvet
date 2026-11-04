@@ -50,4 +50,17 @@ run_mutant "grounding ignores numbers not present in the quote" src/clinical/gro
 run_mutant "draft schema accepts extra keys (a price) at the root" src/clinical/schema.ts \
   '/^      billable: z.array/{n;n;s/\.strict();/.passthrough();/}' \
   test/fill.test.ts || status=1
+run_mutant "webhook ignores capture currency (APPROVED path)" src/routes/webhook.ts \
+  's/status = cap.amountCents === charge.amount_cents \&\& cap.currency === charge.currency \&\& cap.status === "COMPLETED"/status = cap.amountCents === charge.amount_cents \&\& cap.status === "COMPLETED"/' \
+  test/webhook.test.ts || status=1
+run_mutant "webhook ignores currency (CAPTURE.COMPLETED path)" src/routes/webhook.ts \
+  's/status = amountCents === charge.amount_cents \&\& r.data.amount.currency_code === charge.currency ? "captured" : "amount_mismatch";/status = amountCents === charge.amount_cents ? "captured" : "amount_mismatch";/' \
+  test/webhook.test.ts || status=1
+run_mutant "verify accepts anything but FAILURE" src/paypal.ts \
+  's/return VerifySchema.parse(raw).verification_status === "SUCCESS";/return VerifySchema.parse(raw).verification_status !== "FAILURE";/' \
+  test/webhook.test.ts || status=1
+run_mutant "consent timestamp overwritable" src/routes/sim.ts \
+  's/WHERE id = ?3 AND owner_consent_at IS NULL/WHERE id = ?3/' test/sim.test.ts || status=1
+run_mutant "post-model human re-check removed" src/agent/run.ts \
+  's/if (await humanHasChat(ctx, await recentHistory(env, conversationId))) return null;/if (false) return null;/' test/sim.test.ts || status=1
 exit $status
