@@ -261,4 +261,20 @@ describe("chat simulator + agent (E11, E13, E14, agent guards)", () => {
     expect(parsed.issues).toMatch(/content\.0/);
     expect(line).not.toContain("12345678901");
   });
+
+  it("ratchet: a malformed tool_use block ({type:\"tool_use\", id:5}, stop_reason tool_use) is a ZodError → reply null, issues content.0", async () => {
+    const session = crypto.randomUUID();
+    const { app, count: calls } = makeApp({ [PP.claude]: claudeScript([{ stop_reason: "tool_use", content: [{ type: "tool_use", id: 5 }] }]) });
+    const logs = captureLogs();
+    try {
+      expect(await (await chat(app, session, "hola")).json()).toEqual({ reply: null, escalated: false });
+    } finally {
+      logs.restore();
+    }
+    expect(calls(PP.claude)).toBe(1);
+    const line = logs.lines.find((l) => l.includes('"event":"agent_error"'));
+    expect(line).toBeDefined();
+    expect(JSON.parse(line!)).toMatchObject({ error: "ZodError" });
+    expect(JSON.parse(line!).issues).toMatch(/content\.0/);
+  });
 });

@@ -1,6 +1,7 @@
 import { env } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
-import { executeTool, TOOLS, type ToolContext } from "../src/agent/tools";
+import { approxBirthDate, executeTool, TOOLS, type ToolContext } from "../src/agent/tools";
+import { systemPrompt } from "../src/agent/run";
 import { makePayPal } from "../src/paypal";
 import { count, fakeFetch, NOW, paypalFakes, PP, seedBooking, withEnv } from "./helpers";
 
@@ -156,5 +157,63 @@ describe("booking + deposit tools (E7, E8, E9, V17)", () => {
     await executeTool(c, "escalate_to_human", { reason: "pide humano" });
     const conv2 = await env.DB.prepare("SELECT bot_escalated FROM conversations WHERE id = ?1").bind(conv).first<{ bot_escalated: number }>();
     expect(conv2?.bot_escalated).toBe(1);
+  });
+
+  describe("pet data at booking (breed, sex, age → printable rx)", () => {
+    async function freshSlot(conv: string) {
+      const slot = crypto.randomUUID();
+      await env.DB.batch([
+        env.DB.prepare("INSERT INTO contacts (id) VALUES (?1)").bind(conv),
+        env.DB.prepare("INSERT INTO conversations (id, contact_id) VALUES (?1, ?1)").bind(conv),
+        env.DB.prepare("INSERT INTO slots (id, starts_at) VALUES (?1, '2026-11-10T16:00:00.000Z')").bind(slot),
+      ]);
+      return slot;
+    }
+    const pet = (conv: string) => env.DB.prepare("SELECT breed, sex, birth_date FROM pets WHERE contact_id = ?1").bind(conv).first<{ breed: string | null; sex: string | null; birth_date: string | null }>();
+
+    it("books without them (optional data never blocks a booking); stores NULLs", async () => {
+      const conv = crypto.randomUUID();
+      const slot = await freshSlot(conv);
+      expect(await executeTool(ctx(conv), "book_appointment", { slot_id: slot, pet_name: "Firulais", species: "perro" })).toMatch(/appointment_id/);
+      expect(await pet(conv)).toEqual({ breed: null, sex: null, birth_date: null });
+    });
+
+    it("stores breed, sex and an approximate birth date (day 1 of the month) derived by the server from the spoken age", async () => {
+      const conv = crypto.randomUUID();
+      const slot = await freshSlot(conv);
+      expect(await executeTool(ctx(conv), "book_appointment", { slot_id: slot, pet_name: "Luna", species: "gato", breed: " siamés ", sex: "hembra", age_years: 3, age_months: 4 })).toMatch(/appointment_id/);
+      // NOW = 2026-11-04 → 3 years 4 months earlier = 2023-07
+      expect(await pet(conv)).toEqual({ breed: "siamés", sex: "hembra", birth_date: "2023-07-01" });
+      expect(approxBirthDate(NOW, undefined, 2)).toBe("2026-09-01");
+      expect(approxBirthDate(NOW, 1)).toBe("2025-11-01");
+      expect(approxBirthDate(NOW, 0, 11)).toBe("2025-12-01");
+      expect(approxBirthDate(NOW)).toBeNull();
+    });
+
+    it("rejects an unknown sex, an age out of range, months ≥ 12 or a model-sent birth date with a clear message; nothing is written and the slot stays free", async () => {
+      const conv = crypto.randomUUID();
+      const slot = await freshSlot(conv);
+      const c = ctx(conv);
+      const base = { slot_id: slot, pet_name: "X", species: "perro" };
+      for (const bad of [{ sex: "otro" }, { age_years: 31 }, { age_years: -1 }, { age_months: 12 }, { age_years: 2.5 }, { birth_date: "2020-01-01" }, { breed: "" }]) {
+        const out = await executeTool(c, "book_appointment", { ...base, ...bad });
+        expect(out).toMatch(/inválida/);
+        expect(out).toMatch(/macho\|hembra/);
+      }
+      expect(await count("appointments", "conversation_id = ?1", conv)).toBe(0);
+      expect(await count("pets", "contact_id = ?1", conv)).toBe(0);
+      expect(await count("slots", "id = ?1 AND taken = 0", slot)).toBe(1);
+    });
+
+    it("the agent prompt asks for breed, sex and age in one question and never blocks the booking on them; the tool schema stays closed", () => {
+      const prompt = systemPrompt("Clínica X");
+      expect(prompt).toMatch(/raza, sexo y edad/);
+      expect(prompt).toMatch(/nunca retrases ni bloquees la cita/);
+      const tool = TOOLS.find((t) => t.name === "book_appointment")!;
+      const schema = tool.input_schema as { required: string[]; additionalProperties: boolean; properties: Record<string, unknown> };
+      expect(schema.required).toEqual(["slot_id", "pet_name", "species"]);
+      expect(schema.additionalProperties).toBe(false);
+      expect(Object.keys(schema.properties).sort()).toEqual(["age_months", "age_years", "breed", "pet_name", "sex", "slot_id", "species"]);
+    });
   });
 });

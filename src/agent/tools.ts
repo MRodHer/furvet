@@ -1,6 +1,7 @@
 // Tools the owner-facing agent may call. Every input is parsed with a STRICT Zod
 // schema (an extra key such as `amount` is a rejection). No tool accepts money:
 // the deposit amount is read from the catalog on the server.
+import { formatClinicTime } from "../time";
 import { z } from "zod";
 import type { Deps, Env } from "../env";
 import { intVar } from "../env";
@@ -28,6 +29,10 @@ export const TOOLS: ToolDef[] = [
         slot_id: { type: "string", description: "slot id from list_slots" },
         pet_name: { type: "string", maxLength: 60 },
         species: { type: "string", enum: ["perro", "gato"] },
+        breed: { type: "string", maxLength: 60, description: "optional, as the owner says it" },
+        sex: { type: "string", enum: ["macho", "hembra"], description: "optional" },
+        age_years: { type: "integer", minimum: 0, maximum: 30, description: "optional; the clinic derives an approximate birth date" },
+        age_months: { type: "integer", minimum: 0, maximum: 11, description: "optional, with or without age_years" },
       },
       required: ["slot_id", "pet_name", "species"],
       additionalProperties: false,
@@ -80,7 +85,17 @@ export const TOOLS: ToolDef[] = [
 
 const ListSlots = z.object({}).strict();
 const BookAppointment = z
-  .object({ slot_id: z.string().uuid(), pet_name: z.string().trim().min(1).max(60), species: z.enum(["perro", "gato"]) })
+  .object({
+    slot_id: z.string().uuid(),
+    pet_name: z.string().trim().min(1).max(60),
+    species: z.enum(["perro", "gato"]),
+    // Optional pet data for the printable prescription. The model never sends dates: the server derives
+    // an approximate birth date (day 1 of the month) from the spoken age; nothing here blocks booking.
+    breed: z.string().trim().min(1).max(60).optional(),
+    sex: z.enum(["macho", "hembra"]).optional(),
+    age_years: z.number().int().min(0).max(30).optional(),
+    age_months: z.number().int().min(0).max(11).optional(),
+  })
   .strict();
 const CreateDeposit = z.object({ appointment_id: z.string().uuid() }).strict();
 const GetPrices = z.object({ query: z.string().trim().min(1).max(80) }).strict();
@@ -105,7 +120,9 @@ export async function executeTool(ctx: ToolContext, name: string, input: unknown
         return ListSlots.safeParse(input).success ? listSlots(ctx) : "Entrada inválida.";
       case "book_appointment": {
         const p = BookAppointment.safeParse(input);
-        return p.success ? bookAppointment(ctx, p.data) : "Entrada inválida para agendar.";
+        return p.success
+          ? bookAppointment(ctx, p.data)
+          : "Entrada inválida para agendar: slot_id, pet_name y species (perro|gato) son obligatorios; breed ≤ 60 letras, sex sólo macho|hembra, age_years entero 0-30, age_months entero 0-11; sin otras claves. Si el dueño no sabe raza, sexo o edad, omítelos.";
       }
       case "create_deposit": {
         const p = CreateDeposit.safeParse(input);
@@ -139,16 +156,19 @@ async function listSlots(ctx: ToolContext): Promise<string> {
     .bind(ctx.deps.now().toISOString())
     .all<{ id: string; starts_at: string }>();
   if (results.length === 0) return "No hay horarios disponibles.";
-  return results.map((s, i) => `${i + 1}) ${s.starts_at} — slot_id: ${s.id}`).join("\n");
+  // Clinic-local text only: the model copies it to the owner and must not re-interpret a UTC instant.
+  return results.map((s, i) => `${i + 1}) ${formatClinicTime(s.starts_at)} — slot_id: ${s.id}`).join("\n");
 }
 
 async function bookAppointment(ctx: ToolContext, p: z.infer<typeof BookAppointment>): Promise<string> {
   const petId = crypto.randomUUID();
   const appointmentId = crypto.randomUUID();
+  const now = ctx.deps.now();
+  const birthDate = approxBirthDate(now, p.age_years, p.age_months);
   // Atomic claim: each INSERT only runs if the previous statement changed exactly one row.
   const results = await ctx.env.DB.batch([
-    ctx.env.DB.prepare("UPDATE slots SET taken = 1 WHERE id = ?1 AND taken = 0 AND starts_at > ?2").bind(p.slot_id, ctx.deps.now().toISOString()),
-    ctx.env.DB.prepare("INSERT INTO pets (id, contact_id, name, species) SELECT ?1, ?2, ?3, ?4 WHERE changes() = 1").bind(petId, ctx.contactId, p.pet_name, p.species),
+    ctx.env.DB.prepare("UPDATE slots SET taken = 1 WHERE id = ?1 AND taken = 0 AND starts_at > ?2").bind(p.slot_id, now.toISOString()),
+    ctx.env.DB.prepare("INSERT INTO pets (id, contact_id, name, species, breed, sex, birth_date) SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7 WHERE changes() = 1").bind(petId, ctx.contactId, p.pet_name, p.species, p.breed ?? null, p.sex ?? null, birthDate),
     ctx.env.DB.prepare(
       "INSERT INTO appointments (id, slot_id, contact_id, pet_id, conversation_id) SELECT ?1, ?2, ?3, ?4, ?5 WHERE changes() = 1",
     ).bind(appointmentId, p.slot_id, ctx.contactId, petId, ctx.conversationId),
@@ -156,6 +176,13 @@ async function bookAppointment(ctx: ToolContext, p: z.infer<typeof BookAppointme
   if ((results[2]?.meta.changes ?? 0) !== 1) return "Ese horario ya se ocupó. Pide la lista de horarios otra vez.";
   log("appointment_booked", { appointment_id: appointmentId, conversation_id: ctx.conversationId });
   return `Cita agendada. appointment_id: ${appointmentId}. Ahora ofrece el anticipo con create_deposit.`;
+}
+
+/** Spoken age → approximate birth date anchored on day 1 of the month (null when no age was given). */
+export function approxBirthDate(now: Date, years?: number, months?: number): string | null {
+  if (years === undefined && months === undefined) return null;
+  const totalMonths = (years ?? 0) * 12 + (months ?? 0);
+  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - totalMonths, 1)).toISOString().slice(0, 10);
 }
 
 async function createDeposit(ctx: ToolContext, appointmentId: string): Promise<string> {

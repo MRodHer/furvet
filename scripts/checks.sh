@@ -14,6 +14,13 @@ if grep -rnE "api-m\.paypal\.com|https://www\.paypal\.com" src public; then
   echo "FAIL: live PayPal host found in source"; exit 1
 fi
 
+# Hour shown to people: one clinic zone everywhere. The console is browser JS and cannot import
+# src/time.ts, so it carries the same Intl options; this guard keeps the two in step.
+if grep -rnE "toLocaleString\(|toLocaleDateString\(|toLocaleTimeString\(" src public; then
+  echo "FAIL: use formatClinicTime (src/time.ts) or the console's clinicTime, never the browser zone"; exit 1
+fi
+grep -q 'timeZone: "America/Mexico_City", dateStyle: "medium", timeStyle: "short"' public/console.js || { echo "FAIL: public/console.js lost the clinic time format (see src/time.ts)"; exit 1; }
+
 # V19 — no silent catches.
 if grep -rnE "catch *(\([a-zA-Z_]*\))? *\{ *\}" src; then
   echo "FAIL: empty catch block"; exit 1
