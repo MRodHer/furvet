@@ -57,12 +57,15 @@ export function createApp(deps: Deps = DEFAULT_DEPS) {
   app.route("/api/v1/consults", approveRoutes(deps, paypalFor));
   app.route("/", reportRoutes(deps));
 
-  // The doctor console is a static page served only behind the doctor's credential
-  // (wrangler.toml: run_worker_first routes /console here instead of to the asset worker).
-  app.get("/console", doctorAuth(), async (c) => {
-    const page = await c.env.ASSETS.fetch(new Request(new URL("/console.html", c.req.url)));
-    return new Response(page.body, page); // a mutable copy: the asset response's headers are read-only and secureHeaders sets its own
-  });
+  // The doctor console and the ledger board are static pages served only behind the doctor's
+  // credential (wrangler.toml: run_worker_first routes them here instead of to the asset worker).
+  const page = (file: string) => async (c: { env: Env; req: { url: string } }) => {
+    const asset = await c.env.ASSETS.fetch(new Request(new URL(file, c.req.url)));
+    return new Response(asset.body, asset); // a mutable copy: the asset response's headers are read-only and secureHeaders sets its own
+  };
+  app.get("/console", doctorAuth(), page("/console.html"));
+  app.get("/cobros", doctorAuth(), page("/cobros.html"));
+  app.get("/cobros.html", doctorAuth(), page("/cobros.html"));
 
   app.onError((err, c) => {
     // Middleware-raised responses (e.g. the 401 of basicAuth) are answers, not failures.

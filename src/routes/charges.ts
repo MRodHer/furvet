@@ -1,5 +1,7 @@
-// Read-only board API. No payer data exists in these rows; raw payloads never leave the DB.
+// Read-only board API, behind the doctor's credential (pay links and ids are clinic data).
+// No payer data exists in these rows; raw payloads never leave the DB.
 import { Hono } from "hono";
+import { doctorAuth } from "../auth";
 import type { Env } from "../env";
 import { CHARGE_COLUMNS, type ChargeRow } from "../ledger";
 import { centsToValue } from "../money";
@@ -15,6 +17,7 @@ interface EventRow {
 
 export function chargesRoutes() {
   const app = new Hono<{ Bindings: Env }>();
+  app.use("*", doctorAuth());
 
   app.get("/", async (c) => {
     const limit = Math.min(Math.max(Number(c.req.query("limit") ?? "100") || 100, 1), 200);
