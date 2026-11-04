@@ -47,8 +47,8 @@ async function dbContains(marker: string): Promise<string[]> {
   const { results: tables } = await env.DB.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE '\\_cf%' ESCAPE '\\' AND name NOT LIKE 'd1_%'").all<{ name: string }>();
   const hits: string[] = [];
   for (const t of tables) {
-    const { results: cols } = await env.DB.prepare(`PRAGMA table_info(${t.name})`).all<{ name: string }>();
-    const where = cols.map((c) => `CAST("${c.name}" AS TEXT) LIKE ?1`).join(" OR ");
+    const [cols] = (await env.DB.prepare(`SELECT * FROM ${t.name} LIMIT 1`).raw({ columnNames: true })) as [string[], ...unknown[]];
+    const where = cols.map((c) => `CAST("${c}" AS TEXT) LIKE ?1`).join(" OR ");
     const n = await env.DB.prepare(`SELECT COUNT(*) AS n FROM ${t.name} WHERE ${where}`).bind(`%${marker}%`).first<{ n: number }>();
     if ((n?.n ?? 0) > 0) hits.push(t.name);
   }
