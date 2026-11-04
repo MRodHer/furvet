@@ -42,6 +42,8 @@ run_mutant "money parser accepts loose decimals" src/money.ts \
 run_mutant "deposit tool trusts an extra amount key" src/agent/tools.ts \
   's/const CreateDeposit = z.object({ appointment_id: z.string().uuid() }).strict();/const CreateDeposit = z.object({ appointment_id: z.string().uuid() });/' \
   test/booking.test.ts || status=1
+run_mutant "claude client sends temperature again (prod 400: deprecated)" src/agent/claude.ts \
+  's/max_tokens: input.maxTokens,/max_tokens: input.maxTokens, temperature: 0.5,/' test/sim.test.ts || status=1
 # ---- delivery (Constructora C, V20-C) ----
 run_mutant "bill ignores the captured deposit" src/billing.ts \
   's/balanceCents: Math.max(totalCents - depositCents, 0)/balanceCents: Math.max(totalCents, 0)/' test/billing.test.ts || status=1

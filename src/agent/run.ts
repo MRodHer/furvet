@@ -7,7 +7,7 @@
 import type { Deps, Env } from "../env";
 import type { PayPalClient } from "../paypal";
 import { errName, log } from "../log";
-import { askClaude, type ClaudeMessage, type ContentBlock } from "./claude";
+import { askClaude, ClaudeError, type ClaudeMessage, type ContentBlock } from "./claude";
 import { executeTool, TOOLS } from "./tools";
 
 const HISTORY_LIMIT = 20;
@@ -78,7 +78,7 @@ export async function runAgent(ctx: AgentContext, incomingText: string): Promise
   try {
     text = await toolLoop(ctx, messages);
   } catch (e) {
-    log("agent_error", { conversation_id: conversationId, error: errName(e) });
+    log("agent_error", { conversation_id: conversationId, error: errName(e), status: e instanceof ClaudeError ? (e.status ?? null) : null });
     return null;
   }
   if (text === null) return null;
@@ -144,7 +144,6 @@ async function toolLoop(ctx: AgentContext, messages: ClaudeMessage[]): Promise<s
       messages: current,
       tools: TOOLS,
       maxTokens: MAX_TOKENS,
-      temperature: 0.5,
     });
     if (res.stop_reason === "tool_use") {
       current.push({ role: "assistant", content: res.content as ContentBlock[] });

@@ -25,7 +25,6 @@ export async function labelSpeakers(
     tools: [TOOL],
     toolChoice: { type: "tool", name: TOOL.name },
     maxTokens: MAX_TOKENS,
-    temperature: 0,
   });
   const call = res.content.find((b) => b.type === "tool_use");
   const parsed = LabelInput.safeParse(call && "input" in call ? call.input : null);
