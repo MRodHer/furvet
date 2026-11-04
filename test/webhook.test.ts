@@ -154,7 +154,7 @@ describe("PayPal webhook (E1-E4, E6, E14, D.1)", () => {
 
     const b = await seedDeposit();
     const { app: app2 } = makeApp(paypalFakes());
-    expect(await (await post(app2, captureCompletedEvent("WH-14", "CAP-14", b.chargeId, "200.00", "USD"))).json()).toEqual({ status: "amount_mismatch" });
+    expect(await (await post(app2, captureCompletedEvent("WH-14", "CAP-14", b.chargeId, "200.00", "USD", b.orderId))).json()).toEqual({ status: "amount_mismatch" });
     expect(await b.events("status = 'captured'")).toBe(0);
   });
 
@@ -177,17 +177,17 @@ describe("PayPal webhook (E1-E4, E6, E14, D.1)", () => {
   });
 
   it("PAYMENT.CAPTURE.COMPLETED with exact amount → captured once; same capture id twice is one row", async () => {
-    const { chargeId, events } = await seedDeposit();
+    const { chargeId, orderId, events } = await seedDeposit();
     const { app } = makeApp(paypalFakes());
-    expect(await (await post(app, captureCompletedEvent("WH-9", "CAP-9", chargeId, "200.00"))).json()).toEqual({ status: "captured" });
-    expect(await (await post(app, captureCompletedEvent("WH-10", "CAP-9", chargeId, "200.00"))).json()).toEqual({ status: "captured" });
+    expect(await (await post(app, captureCompletedEvent("WH-9", "CAP-9", chargeId, "200.00", "MXN", orderId))).json()).toEqual({ status: "captured" });
+    expect(await (await post(app, captureCompletedEvent("WH-10", "CAP-9", chargeId, "200.00", "MXN", orderId))).json()).toEqual({ status: "already_captured" });
     expect(await events("status = 'captured'")).toBe(1);
   });
 
   it("PAYMENT.CAPTURE.COMPLETED with a different amount → amount_mismatch", async () => {
-    const { chargeId, events } = await seedDeposit();
+    const { chargeId, orderId, events } = await seedDeposit();
     const { app } = makeApp(paypalFakes());
-    expect(await (await post(app, captureCompletedEvent("WH-11", "CAP-11", chargeId, "199.99"))).json()).toEqual({ status: "amount_mismatch" });
+    expect(await (await post(app, captureCompletedEvent("WH-11", "CAP-11", chargeId, "199.99", "MXN", orderId))).json()).toEqual({ status: "amount_mismatch" });
     expect(await events("status = 'captured'")).toBe(0);
   });
 

@@ -86,7 +86,7 @@ export function approveRoutes(deps: Deps, paypalFor: (env: Env) => PayPalClient 
     wanted.unshift({ catalogItemId: consultItem.id, quantity: 1, source: "doctor_added" });
 
     const ids = [...new Set(wanted.map((w) => w.catalogItemId))];
-    const { results: catalog } = await c.env.DB.prepare(`SELECT id, name, price_cents, active FROM catalog_items WHERE id IN (${ids.map((_, i) => `?${i + 1}`).join(",")})`)
+    const { results: catalog } = await c.env.DB.prepare(`SELECT id, name, price_cents, active FROM catalog_items WHERE category <> 'anticipo' AND id IN (${ids.map((_, i) => `?${i + 1}`).join(",")})`)
       .bind(...ids)
       .all<CatalogRow>();
     const deposit = await currentCharge(c.env.DB, "appointment_id", consult.appointment_id);

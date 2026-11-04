@@ -94,4 +94,22 @@ run_mutant "cross-site guard removed (H2)" src/auth.ts \
   's/if (crossSite || originMismatch) {/if (false) {/' test/csrf_board.test.ts || status=1
 run_mutant "body type guard removed (H2)" src/auth.ts \
   's/if (type ? !BODY_TYPES.test(type) : !bodyless) return c.json({ error: "unsupported content type" }, 415);/if (false) return c.json({ error: "unsupported content type" }, 415);/' test/csrf_board.test.ts || status=1
+
+# ---- hardening (audit H3-H9): each barrier alone, red with the defect ----
+run_mutant "lockout check removed (H3)" src/auth.ts \
+  's/if (waitMs > 0) {/if (false) {/' test/hardening.test.ts || status=1
+run_mutant "lockout store failure lets the right credential in (H3 fail-closed)" src/auth.ts \
+  's|return false; // store down ⇒ deny, even with the right credential|return ok;|' test/hardening.test.ts || status=1
+run_mutant "deposit concept billable as a line (H4)" src/routes/approve.ts \
+  "s/WHERE category <> 'anticipo' AND id IN/WHERE id IN/" test/hardening.test.ts || status=1
+run_mutant "over-cap audio upload reserves budget (H5)" src/routes/consults.ts \
+  's/if (estSeconds > cap) {/if (false) {/' test/hardening.test.ts || status=1
+run_mutant "webhook cap counts characters after reading everything (H6)" src/routes/webhook.ts \
+  's/const bytes = await readCapped(c.req.raw.body, MAX_BODY_BYTES);/const bytes = new TextEncoder().encode(await c.req.text());/' test/hardening.test.ts || status=1
+run_mutant "second capture re-settles (H7, code barrier)" src/routes/webhook.ts \
+  's/if (charge.status === "captured") {$/if (false) {/' test/hardening.test.ts || status=1
+run_mutant "capture without related order accepted on custom_id alone (H8)" src/routes/webhook.ts \
+  's/const charge = relatedOrder ? await currentCharge(env.DB, "id", r.data.custom_id) : null;/const charge = await currentCharge(env.DB, "id", r.data.custom_id);/; s/if (!charge || relatedOrder !== charge.paypal_order_id) {/if (!charge || (relatedOrder !== undefined \&\& relatedOrder !== charge.paypal_order_id)) {/' test/hardening.test.ts || status=1
+run_mutant "nested shipping kept in webhook evidence (H9)" src/ledger.ts \
+  's/const PII_KEYS = new Set(\["payer", "payment_source", "payee", "shipping"\]);/const PII_KEYS = new Set(["payer", "payment_source", "payee"]);/' test/hardening.test.ts || status=1
 exit $status

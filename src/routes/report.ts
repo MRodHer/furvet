@@ -55,7 +55,7 @@ export function reportRoutes(deps: Deps) {
         const pay = charge?.approve_url && /^https:\/\/www\.sandbox\.paypal\.com\//.test(charge.approve_url) ? charge.approve_url : null;
         const amount = charge ? formatCents(charge.amount_cents, charge.currency) : "";
         return c.html(
-          `<!doctype html><html lang="es"><head><meta charset="utf-8"><meta name="robots" content="noindex"><title>Informe pendiente</title></head><body style="font-family:system-ui;max-width:32rem;margin:3rem auto;padding:0 1rem">
+          `<!doctype html><html lang="es"><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'"><meta name="robots" content="noindex"><title>Informe pendiente</title></head><body style="font-family:system-ui;max-width:32rem;margin:3rem auto;padding:0 1rem">
 <h1>Su receta ya está en el chat</h1><p>El informe completo se libera al confirmarse el pago del saldo${amount ? ` (${escapeHtml(amount)})` : ""}.</p>
 ${pay ? `<p><a href="${escapeHtml(pay)}" rel="noreferrer">Pagar el saldo con PayPal</a></p>` : ""}</body></html>`,
           402,

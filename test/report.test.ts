@@ -63,7 +63,7 @@ describe("owner links /rx and /r (V10-V13, D.6)", () => {
     expect(await replay.json()).toEqual({ status: "duplicate" });
     expect(await t.msgCount()).toBe(before + 1);
     // m6: PayPal also sends PAYMENT.CAPTURE.COMPLETED for the same capture under another event id.
-    const dup = await t.webhook(captureCompletedEvent("WH-R1b", "CAP-1", t.charge.id, "1081.00"));
+    const dup = await t.webhook(captureCompletedEvent("WH-R1b", "CAP-1", t.charge.id, "1081.00", "MXN", t.charge.paypal_order_id));
     expect(dup.status).toBe(200);
     expect(await t.msgCount()).toBe(before + 1);
     expect(await env.DB.prepare("SELECT COUNT(*) AS n FROM delivery_tokens WHERE consult_id = ?1 AND kind = 'report'").bind(t.consult).first<{ n: number }>()).toEqual({ n: 2 });
@@ -87,7 +87,7 @@ describe("owner links /rx and /r (V10-V13, D.6)", () => {
     expect((await t.get(t.out.report_url)).status).toBe(402);
     expect(await t.msgCount()).toBe(before);
     // A later PAYMENT.CAPTURE.COMPLETED with the wrong amount does not release either.
-    const w2 = await t.webhook(captureCompletedEvent("WH-R3", "CAP-X", t.charge.id, "1080.99"));
+    const w2 = await t.webhook(captureCompletedEvent("WH-R3", "CAP-X", t.charge.id, "1080.99", "MXN", t.charge.paypal_order_id));
     expect(await w2.json()).toEqual({ status: "amount_mismatch" });
     expect((await t.get(t.out.report_url)).status).toBe(402);
   });

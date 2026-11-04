@@ -14,6 +14,7 @@ import type { PayPalClient } from "../paypal";
 import { WEBHOOK_HEADERS } from "../paypal";
 import { currentCharge, redactWebhook, type ChargeRow, type ChargeStatus } from "../ledger";
 import { messageInserts, newToken, tokenInsert } from "../delivery";
+import { readCapped } from "../body";
 import { valueToCents } from "../money";
 import { errName, log } from "../log";
 
@@ -45,10 +46,12 @@ export function webhookRoutes(paypalFor: (env: Env) => PayPalClient | null) {
       log("paypal_webhook_rejected", { reason: "not_configured" });
       return c.json({ error: "webhook not configured" }, 503);
     }
+    // The declared length is a hint; the real cap is on the BYTES read, and the read stops there (H6).
     const declared = Number(c.req.header("content-length") ?? "0");
     if (declared > MAX_BODY_BYTES) return c.json({ error: "too large" }, 413);
-    const rawBody = await c.req.text();
-    if (rawBody.length > MAX_BODY_BYTES) return c.json({ error: "too large" }, 413);
+    const bytes = await readCapped(c.req.raw.body, MAX_BODY_BYTES);
+    if (bytes === null) return c.json({ error: "too large" }, 413);
+    const rawBody = new TextDecoder().decode(bytes);
 
     const headers = c.req.raw.headers;
     const transmissionId = headers.get("paypal-transmission-id") ?? "";
@@ -116,15 +119,23 @@ export function webhookRoutes(paypalFor: (env: Env) => PayPalClient | null) {
       case "PAYMENT.CAPTURE.DENIED": {
         const r = CaptureResource.safeParse(event.resource);
         if (!r.success || !r.data.custom_id) return c.json({ status: "ignored" });
-        const charge = await currentCharge(env.DB, "id", r.data.custom_id);
+        // H8: a capture names its order (supplementary_data.related_ids.order_id); without it there is no
+        // cross-check against OUR order id, so the event is ignored, never trusted on custom_id alone.
         const relatedOrder = r.data.supplementary_data?.related_ids?.order_id;
-        if (!charge || (relatedOrder !== undefined && relatedOrder !== charge.paypal_order_id)) {
-          log("paypal_webhook_unknown_order", { event_id: event.id });
+        const charge = relatedOrder ? await currentCharge(env.DB, "id", r.data.custom_id) : null;
+        if (!charge || relatedOrder !== charge.paypal_order_id) {
+          log("paypal_webhook_unknown_order", { event_id: event.id, reason: relatedOrder ? "order_mismatch" : "no_related_order" });
           return c.json({ status: "ignored" });
         }
         let status: ChargeStatus = "denied";
         let amountCents: number | null = null;
         if (event.event_type === "PAYMENT.CAPTURE.COMPLETED") {
+          // H7: a charge is captured once. A second capture (same or another capture id) neither re-settles
+          // nor re-sends the owner a token; the DB index charge_events_one_captured is the second barrier.
+          if (charge.status === "captured") {
+            log("paypal_webhook_already_captured", { event_id: event.id, charge_id: charge.id });
+            return c.json({ status: "already_captured" });
+          }
           try {
             amountCents = valueToCents(r.data.amount.value);
           } catch {

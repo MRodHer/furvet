@@ -73,9 +73,18 @@ export function currentCharge(db: D1Database, where: "id" | "paypal_order_id" | 
     .first<ChargeRow>();
 }
 
-/** Webhook payloads carry payer data; keep the evidence, drop the person. */
-export function redactWebhook(event: Record<string, unknown>): Record<string, unknown> {
-  const resource = (event.resource ?? {}) as Record<string, unknown>;
-  const { payer: _p, payment_source: _s, payee: _e, ...rest } = resource;
-  return { ...event, resource: rest };
+/** Keys under which PayPal nests a person (buyer or merchant): name, e-mail, phone, address. */
+const PII_KEYS = new Set(["payer", "payment_source", "payee", "shipping"]);
+
+/** Webhook payloads carry payer data at several depths; keep the evidence, drop the person (H9). */
+export function redactWebhook(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(redactWebhook);
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>)
+        .filter(([k]) => !PII_KEYS.has(k))
+        .map(([k, v]) => [k, redactWebhook(v)]),
+    );
+  }
+  return value;
 }
