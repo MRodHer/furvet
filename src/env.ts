@@ -13,6 +13,10 @@ export interface Env {
   BOT_ENABLED: string;
   SIM_DAILY_MESSAGE_CAP: string;
   CLINIC_NAME: string;
+  /** Printed on the rx only. Example values in wrangler.toml; real ones via `--var` at deploy, never in git. */
+  CLINIC_ADDRESS?: string;
+  CLINIC_PHONE?: string;
+  CLINIC_EMAIL?: string;
   MAX_AUDIO_BYTES: string;
   AUDIO_DAILY_SECONDS_CAP: string;
   DOCTOR_DISPLAY_NAME: string;

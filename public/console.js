@@ -114,6 +114,8 @@
     $("chargeBtn").disabled = charged || data.balance_cents === 0;
     $("chargeState").textContent = data.balance_cents === 0 ? "Sin saldo: informe ya liberado." : charged ? `Liga enviada al dueño (estado: ${data.charge.status}).` : "La liga de pago aún no se ha generado.";
   }
+  // The rx never goes to the owner's chat: the doctor opens it here (doctor credential), prints and signs it.
+  $("printRxBtn").addEventListener("click", () => { window.open(`/api/v1/consults/${consultId}/rx.pdf`, "_blank", "noopener"); });
   $("sendExplainBtn").addEventListener("click", async () => {
     $("sendExplainBtn").disabled = true; $("sendExplainState").textContent = "Enviando…";
     const { ok, status, data } = await api(`/${consultId}/send-explanation`, { method: "POST" });

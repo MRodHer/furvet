@@ -70,7 +70,7 @@ export function createApp(deps: Deps = DEFAULT_DEPS) {
   app.onError((err, c) => {
     // Middleware-raised responses (e.g. the 401 of basicAuth) are answers, not failures.
     if (err instanceof HTTPException) return err.getResponse();
-    // routePath, never the concrete path: /r/:token and /rx/:token carry secrets.
+    // routePath, never the concrete path: /r/:token and /t/:token carry secrets.
     console.log(JSON.stringify({ event: "unhandled_error", error: err.name, route: c.req.routePath }));
     return c.json({ error: "internal error" }, 500);
   });

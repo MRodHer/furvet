@@ -1,4 +1,4 @@
-// Owner-facing links: GET /rx/:token (never gated) and GET /r/:token (402 until the balance
+// Owner-facing links: GET /t/:token (the account ticket, never gated) and GET /r/:token (402 until the balance
 // is `captured` in the ledger view, or balance == 0). Token: 256 bits, looked up by sha256;
 // unknown / expired / wrong kind / missing file → the same 404. Nothing here is cacheable,
 // indexable or referable. Per-IP rate limiting is a WAF rule (README), like the webhook.
@@ -9,13 +9,13 @@ import { currentCharge } from "../ledger";
 import { log } from "../log";
 import { formatCents } from "../money";
 
-const PRIVATE = { "Cache-Control": "no-store", "Referrer-Policy": "no-referrer", "X-Robots-Tag": "noindex, nofollow" };
+export const PRIVATE = { "Cache-Control": "no-store", "Referrer-Policy": "no-referrer", "X-Robots-Tag": "noindex, nofollow" };
 
 const escapeHtml = (s: string) => s.replace(/[&<>"']/g, (ch) => `&#${ch.charCodeAt(0)};`);
 
 export function reportRoutes(deps: Deps) {
   const app = new Hono<{ Bindings: Env }>();
-  app.use("/rx/*", async (c, next) => {
+  app.use("/t/*", async (c, next) => {
     await next();
     for (const [k, v] of Object.entries(PRIVATE)) c.header(k, v);
   });
@@ -29,17 +29,19 @@ export function reportRoutes(deps: Deps) {
     return c.text("No encontrado", 404);
   };
 
-  async function servePdf(env: Env, consultId: string, file: "rx" | "report") {
+  async function servePdf(env: Env, consultId: string, file: "report" | "ticket") {
     const bill = await env.DB.prepare("SELECT approval_id FROM consult_bills WHERE consult_id = ?1").bind(consultId).first<{ approval_id: string }>();
     const obj = bill ? await env.FILES.get(`reports/${bill.approval_id}/${file}.pdf`) : null;
     if (!obj) return null;
     return new Response(obj.body, { headers: { "Content-Type": "application/pdf", "Content-Disposition": `inline; filename="${file}.pdf"`, ...PRIVATE } });
   }
 
-  app.get("/rx/:token", async (c) => {
+  // No public route serves rx.pdf: the doctor prints it (GET /api/v1/consults/:id/rx.pdf, credential required).
+  // The ticket token is stored under kind 'rx' (0003 CHECK, no migration) and serves ONLY ticket.pdf.
+  app.get("/t/:token", async (c) => {
     const t = await lookupToken(c.env.DB, c.req.param("token"), "rx", deps.now());
     if (!t) return notFound(c, "unknown");
-    return (await servePdf(c.env, t.consult_id, "rx")) ?? notFound(c, "no_file");
+    return (await servePdf(c.env, t.consult_id, "ticket")) ?? notFound(c, "no_file");
   });
 
   app.get("/r/:token", async (c) => {

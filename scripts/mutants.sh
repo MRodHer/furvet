@@ -130,4 +130,10 @@ run_mutant "quantity above 100 accepted (BB4)" src/billing.ts \
   's/w.quantity < 1 || w.quantity > 100/w.quantity < 1/' test/approve.test.ts || status=1
 run_mutant "billable row for an owner-sourced medication no longer refused (BB3 variant)" src/routes/approve.ts \
   's/if (body.prescription.some((m) => m.owner_sourced \&\& m.catalog_item_id/if (false \&\& body.prescription.some((m) => m.owner_sourced \&\& m.catalog_item_id/' test/approve.test.ts || status=1
+run_mutant "bill messages priced from today's catalog instead of the snapshot (TK4)" src/routes/approve.ts \
+  's/SELECT catalog_item_id AS catalogItemId, name, quantity, unit_price_cents AS unitPriceCents,/SELECT catalog_item_id AS catalogItemId, name, quantity, (SELECT price_cents FROM catalog_items ci WHERE ci.id = bill_lines.catalog_item_id) AS unitPriceCents,/' test/approve.test.ts || status=1
+run_mutant "rx link back in the owner's chat (ADENDA 2)" src/routes/approve.ts \
+  's|"La receta te la entrega la doctora impresa y firmada.",|"La receta te la entrega la doctora impresa y firmada.", `Receta en PDF: ${base}/rx/${ticket.token}`,|' test/approve.test.ts || status=1
+run_mutant "rx section back in the owner's report (ADENDA 2)" src/reports/render.ts \
+  's|  // No rx section here: the prescription is printed and signed by the doctor, never delivered to the owner (ADENDA 2).|  out.push({ kind: "h2", text: "Receta" }, ...prescriptionLines(body).map((text) => ({ kind: "p" as const, text })));|' test/report.test.ts || status=1
 exit $status
