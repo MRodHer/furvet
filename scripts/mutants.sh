@@ -124,4 +124,10 @@ run_mutant "capture naming a foreign order accepted (H8 cross-check removed)" sr
   's/if (!charge || (relatedOrder !== undefined \&\& relatedOrder !== charge.paypal_order_id)) {/if (!charge) {/' test/hardening.test.ts || status=1
 run_mutant "nested shipping kept in webhook evidence (H9)" src/ledger.ts \
   's/const PII_KEYS = new Set(\["payer", "payment_source", "payee", "shipping"\]);/const PII_KEYS = new Set(["payer", "payment_source", "payee"]);/' test/hardening.test.ts || status=1
+run_mutant "owner-sourced medication still billed (BB3 flag ignored)" src/routes/approve.ts \
+  's/if (m.catalog_item_id \&\& !m.owner_sourced \&\& !billed.has(m.catalog_item_id))/if (m.catalog_item_id \&\& !billed.has(m.catalog_item_id))/' test/approve.test.ts || status=1
+run_mutant "quantity above 100 accepted (BB4)" src/billing.ts \
+  's/w.quantity < 1 || w.quantity > 100/w.quantity < 1/' test/approve.test.ts || status=1
+run_mutant "billable row for an owner-sourced medication no longer refused (BB3 variant)" src/routes/approve.ts \
+  's/if (body.prescription.some((m) => m.owner_sourced \&\& m.catalog_item_id/if (false \&\& body.prescription.some((m) => m.owner_sourced \&\& m.catalog_item_id/' test/approve.test.ts || status=1
 exit $status

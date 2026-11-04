@@ -78,18 +78,24 @@ export function approveRoutes(deps: Deps, paypalFor: (env: Env) => PayPalClient 
     const src = (leaf: unknown) => (leafSource(leaf) === "ai" ? "ai_detected" : "doctor_added");
     for (const b of body.billable) wanted.push({ catalogItemId: b.catalog_item_id, quantity: Number(leafValue(b.quantity)), source: src(b.quantity) });
     // A medication/vaccine mapped to the catalog is billed once; an explicit `billable` row wins.
+    // An owner-sourced medication (bought elsewhere) is prescribed but never billed, not even via `billable`.
     const billed = new Set(wanted.map((w) => w.catalogItemId));
-    for (const m of body.prescription) if (m.catalog_item_id && !billed.has(m.catalog_item_id)) wanted.push({ catalogItemId: m.catalog_item_id, quantity: 1, source: src(m.medicamento) });
+    const sold = new Set([...body.prescription.filter((m) => !m.owner_sourced), ...body.vaccines].map((x) => x.catalog_item_id));
+    if (body.prescription.some((m) => m.owner_sourced && m.catalog_item_id && !sold.has(m.catalog_item_id) && billed.has(m.catalog_item_id))) return { error: "owner-sourced item billed", status: 422 as const };
+    for (const m of body.prescription) if (m.catalog_item_id && !m.owner_sourced && !billed.has(m.catalog_item_id)) wanted.push({ catalogItemId: m.catalog_item_id, quantity: 1, source: src(m.medicamento) });
     for (const vx of body.vaccines) if (vx.catalog_item_id && !billed.has(vx.catalog_item_id)) wanted.push({ catalogItemId: vx.catalog_item_id, quantity: 1, source: src(vx.vacuna) });
     const consultItem = await c.env.DB.prepare("SELECT id, name, price_cents, active FROM catalog_items WHERE sku = ?1 AND active = 1").bind(CONSULT_SKU).first<CatalogRow>();
     if (!consultItem) return { error: "catalog has no consultation item", status: 503 as const };
     wanted.unshift({ catalogItemId: consultItem.id, quantity: 1, source: "doctor_added" });
 
-    const ids = [...new Set(wanted.map((w) => w.catalogItemId))];
+    // Owner-sourced ids are validated too (unknown/inactive ⇒ 422, like any client id), just never priced.
+    const ownerSourced = body.prescription.flatMap((m) => (m.owner_sourced && m.catalog_item_id ? [m.catalog_item_id] : []));
+    const ids = [...new Set([...wanted.map((w) => w.catalogItemId), ...ownerSourced])];
     const { results: catalog } = await c.env.DB.prepare(`SELECT id, name, price_cents, active FROM catalog_items WHERE category <> 'anticipo' AND id IN (${ids.map((_, i) => `?${i + 1}`).join(",")})`)
       .bind(...ids)
       .all<CatalogRow>();
     const deposit = await currentCharge(c.env.DB, "appointment_id", consult.appointment_id);
+    if (ownerSourced.some((id) => !catalog.some((row) => row.id === id && row.active === 1))) return { error: "unknown catalog item", status: 422 as const };
     let bill: Bill;
     try {
       bill = computeBill(buildLines(wanted, catalog), deposit?.status === "captured" && deposit.currency === c.env.CURRENCY ? deposit.amount_cents : 0);
@@ -315,15 +321,15 @@ export function approveRoutes(deps: Deps, paypalFor: (env: Env) => PayPalClient 
     if (!consult) return c.json({ error: "not found" }, 404);
     const bill = await loadBill(c.env, consult.id);
     if (!bill) return c.json({ approved: false });
-    const [sent, charge] = await Promise.all([
+    const [sent, charge, lines] = await Promise.all([
       c.env.DB.prepare("SELECT created_at FROM explanation_releases WHERE consult_id = ?1").bind(consult.id).first<{ created_at: string }>(),
       currentCharge(c.env.DB, "consult_id", consult.id),
+      c.env.DB.prepare("SELECT catalog_item_id AS catalogItemId, name, quantity, unit_price_cents AS unitPriceCents, line_total_cents AS lineTotalCents, source FROM bill_lines WHERE consult_id = ?1 ORDER BY id").bind(consult.id).all<BillLine>(),
     ]);
     return c.json({
       approved: true,
-      total_cents: bill.total_cents,
-      deposit_cents: bill.deposit_cents,
-      balance_cents: bill.balance_cents,
+      // The snapshot lines, through the same shaper as the preview: what is shown is what was charged.
+      ...billJson({ lines: lines.results, totalCents: bill.total_cents, depositCents: bill.deposit_cents, balanceCents: bill.balance_cents }, c.env.CURRENCY),
       explanation: bill.explanation,
       explanation_source: bill.explanation_source,
       explanation_sent_at: sent?.created_at ?? null,

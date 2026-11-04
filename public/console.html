@@ -37,6 +37,7 @@
   .badge { display:inline-block; font-size:.7rem; padding:1px 6px; border-radius:999px; background:#ede9fe; color:var(--ai); border:1px solid #c4b5fd; margin-left:6px; vertical-align: middle; }
   .field[data-source="doctor"] .badge, .field[data-source="doctor"] .link { display:none; }
   .warn { color: var(--warn); font-size:.8rem; }
+  table.bill { border-collapse: collapse; margin: 6px 0; font-size: .9rem; } table.bill th, table.bill td { text-align: left; padding: 3px 10px 3px 0; border-bottom: 1px solid #e5e7eb; } table.bill td:last-child, table.bill th + td { text-align: right; }
   #discarded li { font-size:.85rem; margin:4px 0; } #discarded q { color:var(--muted); }
   .med { border:1px dashed #d1d5db; border-radius:8px; padding:8px; margin:6px 0; }
   .grid2 { display:grid; grid-template-columns: 1fr 1fr; gap:6px; }
@@ -87,6 +88,9 @@
       <h2 id="h-form">5. Expediente</h2>
       <div class="row"><button id="fillBtn" type="button">Generar borrador con IA</button> <span id="fillState" class="note"></span></div>
       <form id="soap" autocomplete="off"></form>
+      <h3>Cobro</h3>
+      <div class="row"><button id="previewBtn" type="button" class="secondary">Calcular cobro</button> <span id="previewState" class="note">Desglose del cobro antes de aprobar: consulta, medicamentos vendidos y vacunas.</span></div>
+      <table id="billPreview" class="bill"></table>
       <h3>Descartado por falta de sustento</h3>
       <ul id="discarded"><li class="note">Nada todavía.</li></ul>
       <div class="row" style="margin-top:12px"><button id="approveBtn" type="button" disabled>Aprobar consulta</button> <span id="approveState" class="note"></span></div>
@@ -97,8 +101,8 @@
       <h3>Explicación en palabras sencillas <span id="explainSource" class="note"></span></h3>
       <p id="explainText" style="white-space:pre-wrap"></p>
       <div class="row"><button id="sendExplainBtn" type="button" disabled>Enviar al dueño</button> <span id="sendExplainState" class="note"></span></div>
-      <h3>Saldo</h3>
-      <p id="billLine"></p>
+      <h3>Cobro del saldo</h3>
+      <table id="billTable" class="bill"></table>
       <div class="row"><button id="chargeBtn" type="button" disabled>Generar cobro</button> <span id="chargeState" class="note"></span></div>
     </section>
   </div>

@@ -35,8 +35,9 @@ export const BODY_SYSTEMS = [
   "oftalmologico", "urinario", "reproductivo", "linfatico", "otico",
 ] as const;
 
-/** One shape, two leaf kinds (AI draft vs. approved). No price/money field exists at any level. */
-function consultShape(L: Leaf) {
+/** One shape, two leaf kinds (AI draft vs. approved). No price/money field exists at any level.
+ *  `medExtra`: fields only the doctor may set on a medication (the model's tool schema never sees them). */
+function consultShape<M extends z.ZodRawShape>(L: Leaf, medExtra: M = {} as M) {
   const GText = L(z.string().min(1).max(2000));
   const GNum = L(z.number().finite());
   const SistemaEvaluacion = z.object({ evaluado: L(z.boolean()), normal: L(z.boolean()).optional(), hallazgos: GText.optional() }).strict();
@@ -51,6 +52,7 @@ function consultShape(L: Leaf) {
       concentracion: GText.optional(),
       indicaciones: GText.optional(),
       catalog_item_id: z.string().optional(),
+      ...medExtra,
     })
     .strict();
   return z
@@ -106,7 +108,8 @@ function consultShape(L: Leaf) {
 /** What the model may propose (every leaf grounded). */
 export const ConsultDraft = consultShape(Grounded);
 /** What the doctor approves (every leaf tagged `source`). Parsed by POST /approve. */
-export const ApprovedConsult = consultShape(Approved);
+/** `owner_sourced`: the owner buys that medication elsewhere — prescribed, never billed. */
+export const ApprovedConsult = consultShape(Approved, { owner_sourced: z.boolean().optional() });
 
 export type ConsultDraft = z.infer<typeof ConsultDraft>;
 export type ApprovedConsult = z.infer<typeof ApprovedConsult>;

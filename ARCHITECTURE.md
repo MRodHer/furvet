@@ -164,7 +164,7 @@ El orden de comprobación es fijo y se prueba: configuración → autenticación
 - Vitest con el pool de Workers: las pruebas corren **dentro** de workerd con D1 local real y las migraciones aplicadas. Nada se simula de la plataforma.
 - `npm test` = `scripts/checks.sh` **y luego** la suite. Los checks estáticos fallan antes de correr un solo test.
 - Un test por cláusula del contrato de aceptación; el nombre del test lleva el identificador de la cláusula.
-- Medido: 17 archivos de prueba; 22 mutantes en `scripts/mutants.sh`.
+- Medido (feat/bill-breakdown, 2026-11-04): 19 archivos de prueba; 42 mutantes en `scripts/mutants.sh`.
 
 ### 7.2 Checks estáticos (`scripts/checks.sh`)
 
@@ -271,7 +271,7 @@ Leyenda: 🔴 mecánico (un test, script o restricción lo hace fallar) · 🟡 
 
 | prueba                        | qué hay hoy en el repo (medido)                                                                                                          | regla que la hace pasar por diseño                      |
 | ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------- |
-| Mutación                      | `scripts/mutants.sh`: 22 mutantes rojo/verde con baseline y estado `broken` separado                                                      | R20; §7.3                                               |
+| Mutación                      | `scripts/mutants.sh`: 42 mutantes rojo/verde con baseline y estado `broken` separado                                                      | R20; §7.3                                               |
 | Escaneo de secretos           | `gitleaks` local antes de publicar; `.gitignore` cubre `.env*` y `.dev.vars*`; `checks.sh` veta términos de proyectos privados             | R19; §8                                                 |
 | SAST                          | No existe (ni Semgrep ni CodeQL). Mitigación de diseño: sinks concentrados (un módulo para el modelo, uno para el proveedor de pagos)      | §4.3, R7; **R118**                                      |
 | SCA (dependencias)            | Lockfile versionado; 2 dependencias de producción fijadas sin rango; sin gate automático de CVE                                           | §4.2; **R118**                                          |
