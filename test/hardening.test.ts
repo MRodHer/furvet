@@ -182,12 +182,15 @@ describe("H7 + H8: one capture per charge; a capture must name its order", () =>
     ).rejects.toThrow(/UNIQUE/);
   });
 
-  it("H8: PAYMENT.CAPTURE.COMPLETED without supplementary_data.related_ids.order_id → ignored, 0 rows, no message", async () => {
+  it("H8: a capture naming a FOREIGN order → ignored, 0 rows, no message; one naming no order is judged by custom_id + amount (cross-check when present, not required: R122 smoke pending)", async () => {
     const t = await charged();
     const m0 = await msgs(t.conv);
-    expect(await (await t.hook(captureCompletedEvent("EV-NOREL", "CAP-X", t.charge.id, t.value))).json()).toEqual({ status: "ignored" });
+    expect(await (await t.hook(captureCompletedEvent("EV-FOREIGN", "CAP-F", t.charge.id, t.value, "MXN", "ORDER-OF-SOMEONE-ELSE"))).json()).toEqual({ status: "ignored" });
     expect(await count("charge_events", "charge_id = ?1 AND paypal_event_id IS NOT NULL", t.charge.id)).toBe(0);
     expect(await msgs(t.conv)).toBe(m0);
+    expect(await (await t.hook(captureCompletedEvent("EV-NOREL", "CAP-X", t.charge.id, t.value))).json()).toEqual({ status: "captured" });
+    expect(await count("charge_events", "charge_id = ?1 AND status = 'captured'", t.charge.id)).toBe(1);
+    expect(await msgs(t.conv)).toBe(m0 + 1);
   });
 });
 

@@ -119,12 +119,13 @@ export function webhookRoutes(paypalFor: (env: Env) => PayPalClient | null) {
       case "PAYMENT.CAPTURE.DENIED": {
         const r = CaptureResource.safeParse(event.resource);
         if (!r.success || !r.data.custom_id) return c.json({ status: "ignored" });
-        // H8: a capture names its order (supplementary_data.related_ids.order_id); without it there is no
-        // cross-check against OUR order id, so the event is ignored, never trusted on custom_id alone.
+        // H8: when the capture names its order (supplementary_data.related_ids.order_id) it must be OUR order;
+        // a foreign order is ignored. Whether PayPal always sends related_ids is not measured yet (R122 smoke),
+        // so a capture without it is still judged by custom_id + amount + currency, never rejected silently.
         const relatedOrder = r.data.supplementary_data?.related_ids?.order_id;
-        const charge = relatedOrder ? await currentCharge(env.DB, "id", r.data.custom_id) : null;
-        if (!charge || relatedOrder !== charge.paypal_order_id) {
-          log("paypal_webhook_unknown_order", { event_id: event.id, reason: relatedOrder ? "order_mismatch" : "no_related_order" });
+        const charge = await currentCharge(env.DB, "id", r.data.custom_id);
+        if (!charge || (relatedOrder !== undefined && relatedOrder !== charge.paypal_order_id)) {
+          log("paypal_webhook_unknown_order", { event_id: event.id, reason: charge ? "order_mismatch" : "unknown_charge" });
           return c.json({ status: "ignored" });
         }
         let status: ChargeStatus = "denied";

@@ -108,8 +108,8 @@ run_mutant "webhook cap counts characters after reading everything (H6)" src/rou
   's/const bytes = await readCapped(c.req.raw.body, MAX_BODY_BYTES);/const bytes = new TextEncoder().encode(await c.req.text());/' test/hardening.test.ts || status=1
 run_mutant "second capture re-settles (H7, code barrier)" src/routes/webhook.ts \
   's/if (charge.status === "captured") {$/if (false) {/' test/hardening.test.ts || status=1
-run_mutant "capture without related order accepted on custom_id alone (H8)" src/routes/webhook.ts \
-  's/const charge = relatedOrder ? await currentCharge(env.DB, "id", r.data.custom_id) : null;/const charge = await currentCharge(env.DB, "id", r.data.custom_id);/; s/if (!charge || relatedOrder !== charge.paypal_order_id) {/if (!charge || (relatedOrder !== undefined \&\& relatedOrder !== charge.paypal_order_id)) {/' test/hardening.test.ts || status=1
+run_mutant "capture naming a foreign order accepted (H8 cross-check removed)" src/routes/webhook.ts \
+  's/if (!charge || (relatedOrder !== undefined \&\& relatedOrder !== charge.paypal_order_id)) {/if (!charge) {/' test/hardening.test.ts || status=1
 run_mutant "nested shipping kept in webhook evidence (H9)" src/ledger.ts \
   's/const PII_KEYS = new Set(\["payer", "payment_source", "payee", "shipping"\]);/const PII_KEYS = new Set(["payer", "payment_source", "payee"]);/' test/hardening.test.ts || status=1
 exit $status
