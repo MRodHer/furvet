@@ -24,6 +24,9 @@ binding = "AI"
 
 [assets]
 directory = "./public"
+binding = "ASSETS"
+# The doctor console is served by the Worker (behind HTTP Basic), never as a bare static asset.
+run_worker_first = ["/console", "/console/*"]
 
 [vars]
 # The app refuses every request unless this is exactly "sandbox" (fail-closed).
@@ -33,6 +36,9 @@ MAX_CHARGE_CENTS = "5000000"
 BOT_ENABLED = "true"
 SIM_DAILY_MESSAGE_CAP = "300"
 CLINIC_NAME = "FurVet demo clinic"
+# Audio: 30 min at 32 kbps ≈ 7.2 MB. Daily transcription budget in seconds (free tier ≈ 214 min).
+MAX_AUDIO_BYTES = "8000000"
+AUDIO_DAILY_SECONDS_CAP = "7200"
 
 [observability]
 enabled = true
