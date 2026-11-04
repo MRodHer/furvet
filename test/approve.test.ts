@@ -429,13 +429,19 @@ describe("bill breakdown, editable quantities and owner-sourced medications (BB1
     expect(order.purchase_units[0].items.map((i: { name: string }) => i.name)).toEqual(["Consulta general", "VAC-RABIA"]);
   });
 
-  it("BB3b: the same catalog item excluded on one row and sold on another is billed once (the sold row wins)", async () => {
+  it("BB3b: the same catalog item excluded on one row and sold on another (medication or vaccine), with the billable row the console sends, is billed once", async () => {
     const { consult, ids } = await seedConsult();
     const { app } = makeApp(fakes());
-    const body = approvedBody(ids, { billable: [] });
+    // As the console sends it: the sold row contributes its billable line; the excluded row contributes nothing.
+    const body = approvedBody(ids, { billable: [{ catalog_item_id: ids["MED-AMOXI"], quantity: doc(1) }] });
     body.prescription = [{ ...body.prescription[0], owner_sourced: true }, { ...body.prescription[0], medicamento: doc("amoxicilina (segunda caja)") }];
     const out = (await (await preview(app, consult, body)).json()) as { lines: { name: string; quantity: number }[] };
     expect(out.lines.map((l) => [l.name, l.quantity])).toEqual([["Consulta general", 1], ["MED-AMOXI", 1], ["VAC-RABIA", 1]]);
+    // Sold as a VACCINE while excluded as a medication: still one line (the vaccine's).
+    const vax = approvedBody(ids, { billable: [{ catalog_item_id: ids["MED-AMOXI"], quantity: doc(1) }], vaccines: [{ vacuna: doc("rabia"), catalog_item_id: ids["MED-AMOXI"] }] });
+    vax.prescription = [{ ...vax.prescription[0], owner_sourced: true }];
+    const out2 = (await (await preview(app, consult, vax)).json()) as { lines: { name: string; quantity: number }[] };
+    expect(out2.lines.map((l) => [l.name, l.quantity])).toEqual([["Consulta general", 1], ["MED-AMOXI", 1]]);
   });
 
   it("BB5/R6: the model's schema (ConsultDraft) rejects owner_sourced; only the approved schema accepts it", () => {
@@ -453,12 +459,16 @@ describe("bill breakdown, editable quantities and owner-sourced medications (BB1
       ...[0, 101, 1.5].map((q) => approvedBody(ids, { billable: [{ catalog_item_id: ids["MED-AMOXI"], quantity: doc(q) }] })),
       approvedBody(ids, { billable: [{ catalog_item_id: "not-in-catalog", quantity: doc(1) }] }),
     ];
-    const flagged = approvedBody(ids);
-    flagged.prescription[0] = { ...flagged.prescription[0], owner_sourced: "sí" };
-    bad.push(flagged);
     for (const body of bad) {
       expect((await preview(app, consult, body)).status).toBe(422);
       expect((await post(app, consult, body)).status).toBe(422);
+    }
+    // A non-boolean flag is refused by the SCHEMA itself (no billable row, so no other barrier can catch it).
+    const flagged = approvedBody(ids, { billable: [] });
+    flagged.prescription[0] = { ...flagged.prescription[0], owner_sourced: "sí" };
+    for (const res of [await preview(app, consult, flagged), await post(app, consult, flagged)]) {
+      expect(res.status).toBe(422);
+      expect(await res.json()).toMatchObject({ error: "invalid body", issues: ["prescription.0.owner_sourced"] });
     }
     expect(await count("consult_bills", "consult_id = ?1", consult)).toBe(0);
     expect(await count("bill_lines", "consult_id = ?1", consult)).toBe(0);
