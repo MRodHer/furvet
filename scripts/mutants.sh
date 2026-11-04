@@ -66,6 +66,8 @@ run_mutant "approximate birth date ignores the months" src/agent/tools.ts \
   's/const totalMonths = (years ?? 0) \* 12 + (months ?? 0);/const totalMonths = (years ?? 0) * 12;/' test/booking.test.ts || status=1
 run_mutant "book_appointment accepts any sex string" src/agent/tools.ts \
   's/sex: z.enum(\["macho", "hembra"\]).optional(),/sex: z.string().optional(),/' test/booking.test.ts || status=1
+run_mutant "dose unit regex back to abbreviations only («250 miligramos» blocks approval)" src/clinical/grounding.ts \
+  's/|miligramos?|mililitros?|microgramos?|gramos?|unidad(?:es)? internacional(?:es)?//' test/grounding.test.ts || status=1
 # ---- delivery (Constructora C, V20-C) ----
 run_mutant "bill ignores the captured deposit" src/billing.ts \
   's/balanceCents: Math.max(totalCents - depositCents, 0)/balanceCents: Math.max(totalCents, 0)/' test/billing.test.ts || status=1

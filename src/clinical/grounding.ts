@@ -26,7 +26,8 @@ const RANGES: Record<string, [number, number]> = {
   peso: [0.1, 120],
   condicion_corporal: [1, 9],
 };
-const DOSE_UNIT_RE = /\b(mg\/kg|mg|ml|ui|mcg|g|gotas?|tabletas?|c[aá]psulas?|comprimidos?)\b/i;
+// Abbreviations and the spelled-out forms the transcriber writes («250 miligramos»); the number is still required (numbersIn).
+const DOSE_UNIT_RE = /\b(mg\/kg|mg|ml|ui|mcg|g|miligramos?|mililitros?|microgramos?|gramos?|unidad(?:es)? internacional(?:es)?|gotas?|tabletas?|c[aá]psulas?|comprimidos?)\b/i;
 const FREQ_RE = /\b(cada|c\/|veces|al d[ií]a|diari[oa]|horas?|hrs?|h)\b/i;
 const DURATION_RE = /\b(d[ií]as?|semanas?|meses|mes|horas?)\b/i;
 
