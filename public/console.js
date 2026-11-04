@@ -4,6 +4,8 @@
 (() => {
   "use strict";
   const $ = (id) => document.getElementById(id);
+  // Same zone and style as src/time.ts (clinic-local, never the browser zone); scripts/checks.sh keeps them in step.
+  const clinicTime = (iso) => new Intl.DateTimeFormat("es-MX", { timeZone: "America/Mexico_City", dateStyle: "medium", timeStyle: "short" }).format(new Date(iso));
   const DOCTOR_CONSENT_VERSION = "doctor-v1-2026-11-04";
   const MAX_SECONDS = 30 * 60;
   const SPEAKERS = ["doctor", "owner", "unknown"];
@@ -56,7 +58,7 @@
     sel.replaceChildren();
     if (!ok) { setStatus(`No se pudo cargar la lista (${data.error || ""})`, "err"); return; }
     for (const a of data) {
-      const label = `${new Date(a.starts_at).toLocaleString("es-MX")} · ${a.pet_name} (${a.species}) · ${a.consult_status ? "consulta " + a.consult_status : "sin abrir"}`;
+      const label = `${clinicTime(a.starts_at)} · ${a.pet_name} (${a.species}) · ${a.consult_status ? "consulta " + a.consult_status : "sin abrir"}`;
       sel.append(el("option", { value: a.id, textContent: label, "data-consult": a.consult_id || "" }));
     }
   }
@@ -82,7 +84,7 @@
     catalog = data.catalog;
     $("consultMeta").textContent = `Consulta ${consultId.slice(0, 8)} · ${data.pet.name} (${data.pet.species}${data.pet.breed ? ", " + data.pet.breed : ""}) · estado: ${consult.status}`;
     $("consentCard").classList.remove("hidden");
-    $("ownerConsent").textContent = consult.owner_consent_at ? `aceptó el ${new Date(consult.owner_consent_at).toLocaleString("es-MX")} (texto ${consult.owner_consent_version})` : "NO ha aceptado en el chat";
+    $("ownerConsent").textContent = consult.owner_consent_at ? `aceptó el ${clinicTime(consult.owner_consent_at)} (texto ${consult.owner_consent_version})` : "NO ha aceptado en el chat";
     const doctorDone = !!consult.doctor_consent_at;
     $("doctorBox").checked = doctorDone; $("doctorBox").disabled = doctorDone; $("doctorConsentBtn").disabled = true;
     $("doctorConsentState").textContent = doctorDone ? "Registrada." : "";
@@ -108,7 +110,7 @@
     $("explainSource").textContent = data.explanation_source === "ai" ? "(redactada por IA a partir de lo aprobado)" : "(plantilla fija, sin IA)";
     const sent = !!data.explanation_sent_at;
     $("sendExplainBtn").disabled = sent;
-    $("sendExplainState").textContent = sent ? `Enviada el ${new Date(data.explanation_sent_at).toLocaleString("es-MX")}.` : "Aún no enviada.";
+    $("sendExplainState").textContent = sent ? `Enviada el ${clinicTime(data.explanation_sent_at)}.` : "Aún no enviada.";
     renderBill($("billTable"), data);
     const charged = !!data.charge;
     $("chargeBtn").disabled = charged || data.balance_cents === 0;
@@ -306,7 +308,7 @@
     const disc = draft ? draft.grounding.discarded : [];
     if (!disc.length) list.append(el("li", { class: "note", textContent: draft ? "Nada descartado." : "Nada todavía." }));
     for (const d of disc) list.append(el("li", {}, el("strong", { textContent: d.path }), `: ${REASON[d.reason] || d.reason} `, d.quote ? el("q", { textContent: d.quote }) : ""));
-    $("fillState").textContent = draft ? `Borrador del ${new Date(draft.created_at).toLocaleString("es-MX")}` : "Sin borrador.";
+    $("fillState").textContent = draft ? `Borrador del ${clinicTime(draft.created_at)}` : "Sin borrador.";
   }
   $("fillBtn").addEventListener("click", async () => {
     $("fillBtn").disabled = true; $("fillState").textContent = "Pidiendo el borrador a la IA…";

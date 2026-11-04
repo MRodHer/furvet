@@ -15,15 +15,15 @@ INSERT INTO catalog_items (id, sku, name, category, price_cents, unit) VALUES
   ('c0000000-0000-4000-8000-000000000010', 'MED-METRONIDAZOL', 'Metronidazol (tableta)', 'medicamento', 0, 'tableta'),
   ('c0000000-0000-4000-8000-000000000011', 'MED-OTICO', 'Gotas óticas (frasco)', 'medicamento', 0, 'frasco');
 
--- Ten future slots, weekdays-agnostic, 30 min each.
+-- Ten future slots, weekdays-agnostic, 30 min each. Stored in UTC; 16:00Z = 10:00 America/Mexico_City (UTC-6, no DST).
 INSERT INTO slots (id, starts_at) VALUES
-  ('a0000000-0000-4000-8000-000000000001', strftime('%Y-%m-%dT10:00:00Z', 'now', '+1 day')),
-  ('a0000000-0000-4000-8000-000000000002', strftime('%Y-%m-%dT10:30:00Z', 'now', '+1 day')),
-  ('a0000000-0000-4000-8000-000000000003', strftime('%Y-%m-%dT11:00:00Z', 'now', '+1 day')),
-  ('a0000000-0000-4000-8000-000000000004', strftime('%Y-%m-%dT16:00:00Z', 'now', '+1 day')),
-  ('a0000000-0000-4000-8000-000000000005', strftime('%Y-%m-%dT16:30:00Z', 'now', '+1 day')),
-  ('a0000000-0000-4000-8000-000000000006', strftime('%Y-%m-%dT10:00:00Z', 'now', '+2 days')),
-  ('a0000000-0000-4000-8000-000000000007', strftime('%Y-%m-%dT10:30:00Z', 'now', '+2 days')),
-  ('a0000000-0000-4000-8000-000000000008', strftime('%Y-%m-%dT11:00:00Z', 'now', '+2 days')),
-  ('a0000000-0000-4000-8000-000000000009', strftime('%Y-%m-%dT16:00:00Z', 'now', '+2 days')),
-  ('a0000000-0000-4000-8000-000000000010', strftime('%Y-%m-%dT16:30:00Z', 'now', '+2 days'));
+  ('a0000000-0000-4000-8000-000000000001', strftime('%Y-%m-%dT16:00:00Z', 'now', '+1 day')),
+  ('a0000000-0000-4000-8000-000000000002', strftime('%Y-%m-%dT16:30:00Z', 'now', '+1 day')),
+  ('a0000000-0000-4000-8000-000000000003', strftime('%Y-%m-%dT17:00:00Z', 'now', '+1 day')),
+  ('a0000000-0000-4000-8000-000000000004', strftime('%Y-%m-%dT22:00:00Z', 'now', '+1 day')),
+  ('a0000000-0000-4000-8000-000000000005', strftime('%Y-%m-%dT22:30:00Z', 'now', '+1 day')),
+  ('a0000000-0000-4000-8000-000000000006', strftime('%Y-%m-%dT16:00:00Z', 'now', '+2 days')),
+  ('a0000000-0000-4000-8000-000000000007', strftime('%Y-%m-%dT16:30:00Z', 'now', '+2 days')),
+  ('a0000000-0000-4000-8000-000000000008', strftime('%Y-%m-%dT17:00:00Z', 'now', '+2 days')),
+  ('a0000000-0000-4000-8000-000000000009', strftime('%Y-%m-%dT22:00:00Z', 'now', '+2 days')),
+  ('a0000000-0000-4000-8000-000000000010', strftime('%Y-%m-%dT22:30:00Z', 'now', '+2 days'));

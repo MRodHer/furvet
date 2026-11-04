@@ -52,6 +52,8 @@ run_mutant "deposit confirmation message sent without the this-batch guard (repl
   's/DEPOSIT_CONFIRMED_TEXT, "changes() = 1", \[\], 1)/DEPOSIT_CONFIRMED_TEXT, "1 = 1", [], 1)/' test/webhook.test.ts || status=1
 run_mutant "deposit confirmation inserted as a human message (is_bot 0 mutes the agent, E13)" src/routes/webhook.ts \
   's/DEPOSIT_CONFIRMED_TEXT, "changes() = 1", \[\], 1)/DEPOSIT_CONFIRMED_TEXT, "changes() = 1", [], 0)/' test/webhook.test.ts || status=1
+run_mutant "clinic time shown in UTC (chat says 4:00 am for a 10:00 am slot)" src/time.ts \
+  's/timeZone: CLINIC_TZ/timeZone: "UTC"/' test/time.test.ts || status=1
 # ---- delivery (Constructora C, V20-C) ----
 run_mutant "bill ignores the captured deposit" src/billing.ts \
   's/balanceCents: Math.max(totalCents - depositCents, 0)/balanceCents: Math.max(totalCents, 0)/' test/billing.test.ts || status=1

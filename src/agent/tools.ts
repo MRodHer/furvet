@@ -1,6 +1,7 @@
 // Tools the owner-facing agent may call. Every input is parsed with a STRICT Zod
 // schema (an extra key such as `amount` is a rejection). No tool accepts money:
 // the deposit amount is read from the catalog on the server.
+import { formatClinicTime } from "../time";
 import { z } from "zod";
 import type { Deps, Env } from "../env";
 import { intVar } from "../env";
@@ -139,7 +140,8 @@ async function listSlots(ctx: ToolContext): Promise<string> {
     .bind(ctx.deps.now().toISOString())
     .all<{ id: string; starts_at: string }>();
   if (results.length === 0) return "No hay horarios disponibles.";
-  return results.map((s, i) => `${i + 1}) ${s.starts_at} — slot_id: ${s.id}`).join("\n");
+  // Clinic-local text only: the model copies it to the owner and must not re-interpret a UTC instant.
+  return results.map((s, i) => `${i + 1}) ${formatClinicTime(s.starts_at)} — slot_id: ${s.id}`).join("\n");
 }
 
 async function bookAppointment(ctx: ToolContext, p: z.infer<typeof BookAppointment>): Promise<string> {
