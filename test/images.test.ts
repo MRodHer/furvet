@@ -15,6 +15,19 @@ describe("images (V15, D.6)", () => {
     expect(out.bytes.length).toBe(fakeJpeg(false).length);
   });
 
+  it("M3: metadata after the first scan (APP1 between scans, data after EOI) is dropped too", () => {
+    const base = fakeJpeg(false);
+    const body = base.subarray(0, base.length - 2); // without EOI
+    const app1 = [0xff, 0xe1, 0x00, 0x08, 0x45, 0x78, 0x69, 0x66, 0x00, 0x00];
+    const sos2 = [0xff, 0xda, 0x00, 0x08, 0x01, 0x01, 0x00, 0x00, 0x3f, 0x00, 0x56, 0x78];
+    const progressive = new Uint8Array([...body, ...app1, ...sos2, 0xff, 0xd9, ...fakeJpeg(true)]); // trailing "motion photo"
+    const out = cleanImage(progressive);
+    expect(ascii(out.bytes)).not.toContain("Exif");
+    expect(out.bytes[out.bytes.length - 2]).toBe(0xff);
+    expect(out.bytes[out.bytes.length - 1]).toBe(0xd9);
+    expect(() => cleanImage(body)).toThrow(expect.objectContaining({ status: 415 })); // no EOI → corrupt
+  });
+
   it("the type comes from the bytes: a PDF or an .exe named .jpg → 415; > 2 MB → 413", () => {
     expect(() => cleanImage(new TextEncoder().encode("%PDF-1.4 ..."))).toThrow(ImageError);
     expect(() => cleanImage(new Uint8Array([0x4d, 0x5a, 0x90, 0x00]))).toThrow(expect.objectContaining({ status: 415 }));

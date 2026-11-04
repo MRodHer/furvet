@@ -14,32 +14,46 @@ const TOOL = {
   input_schema: { type: "object", properties: { text: { type: "string" } }, required: ["text"], additionalProperties: false },
 };
 const Out = z.object({ text: z.string().min(1).max(2000) }).strict();
-const DOSE_RE = /\d+(?:[.,]\d+)?\s*(?:mg\/kg|mg|ml|mcg|ui|g)\b/gi;
+// Tokens that must appear VERBATIM inside the prescription (not just "somewhere in the JSON").
+const DOSE_RE = /\d+(?:[.,]\d+)?\s*(?:mg\/kg|mg|ml|mcg|ui|g|gotas?|tabletas?)\b|\bcada\s+\d+\s*(?:h|horas?|d[ií]as?)\b|\b\d+\s*(?:d[ií]as?|semanas?|horas?)\b/gi;
+// A cheap drug-name detector: common pharmacological suffixes. Any such word must be a prescribed medication.
+const DRUG_RE = /\b[a-záéíóú]{3,}(?:cilina|micina|ciclina|azol|prazol|oxacino|profeno|sona|mectina|cam|zepam|cilinas)\b/gi;
 const SYSTEM = `Explicas al dueño de una mascota, en español mexicano sencillo y cálido, lo que el médico veterinario aprobó.
 Recibes SOLO el JSON aprobado. Reglas estrictas: no agregues diagnósticos, medicamentos, dosis, frecuencias ni NINGÚN número que no esté textualmente en el JSON; no des consejos nuevos; máximo 180 palabras; sin listas con precios.`;
 
 type Json = string | number | boolean | null | Json[] | { [k: string]: Json };
 
-/** Drops `source`/`segment_ids`/`quote` so only the approved values travel. */
+/** Drops `source`/`segment_ids`/`quote` and catalog ids, so only the approved clinical values travel. */
 export function approvedValues(node: unknown): Json {
   if (Array.isArray(node)) return node.map(approvedValues);
   if (node && typeof node === "object") {
     const o = node as Record<string, unknown>;
     if ("value" in o && "source" in o) return approvedValues(o.value);
-    return Object.fromEntries(Object.entries(o).map(([k, v]) => [k, approvedValues(v)]));
+    return Object.fromEntries(
+      Object.entries(o)
+        .filter(([k]) => k !== "catalog_item_id")
+        .map(([k, v]) => [k, approvedValues(v)]),
+    );
   }
   return node as Json;
 }
+
+const squash = (s: string) => s.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/\s+/g, "");
 
 /** Null when the text is fully backed by the JSON; else the offending tokens. */
 export function explanationViolations(text: string, facts: Json): string[] | null {
   const factsText = JSON.stringify(facts);
   const allowedNumbers = new Set(numbersIn(factsText));
   const bad = numbersIn(text).filter((n) => !allowedNumbers.has(n));
-  const factsNorm = factsText.toLowerCase().replace(/\s+/g, "");
-  for (const dose of text.match(DOSE_RE) ?? []) {
-    if (!factsNorm.includes(dose.toLowerCase().replace(/\s+/g, ""))) bad.push(dose);
-  }
+  const f = facts as { prescription?: Json[]; plan?: Json };
+  const rx = f.prescription ?? [];
+  // Doses/frequencies/durations must come from the prescription or the plan the doctor approved.
+  const rxText = squash(JSON.stringify([rx, f.plan ?? null]));
+  // Whole-token match: "50 mg" must not pass because "250 mg" exists, nor "5 mg" because of "5 mg/kg".
+  const esc = (t: string) => t.replace(/[.*+?^${}()|[\]\\/]/g, "\\$&");
+  for (const tok of text.match(DOSE_RE) ?? []) if (!new RegExp(`(?<![\\d.,])${esc(squash(tok))}(?![a-z/])`).test(rxText)) bad.push(tok);
+  const names = new Set(rx.map((m) => squash(String((m as { medicamento?: unknown }).medicamento ?? ""))));
+  for (const word of text.match(DRUG_RE) ?? []) if (![...names].some((n) => n.includes(squash(word)))) bad.push(word);
   return bad.length ? [...new Set(bad)] : null;
 }
 

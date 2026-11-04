@@ -1,6 +1,6 @@
 import { env } from "cloudflare:test";
 import { afterEach, describe, expect, it } from "vitest";
-import { approvedBody, approvedEvent, assertNoPii, captureCompletedEvent, captureLogs, claudeToolFake, doctorEnv, doctorHeaders, makeApp, paypalFakes, seedConsult, uniqueOrderFake, webhookHeaders } from "./helpers";
+import { approvedBody, approvedEvent, assertNoPii, captureCompletedEvent, captureLogs, claudeToolFake, doctorEnv, doctorHeaders, makeApp, NOW, paypalFakes, seedConsult, uniqueOrderFake, webhookHeaders } from "./helpers";
 
 const fakes = (captureValue = "881.00") => ({ ...paypalFakes({ captureValue }), ...uniqueOrderFake, ...claudeToolFake(["Su perro tiene gastroenteritis leve."]) });
 const PRIVATE = { "cache-control": "no-store", "referrer-policy": "no-referrer", "x-robots-tag": "noindex, nofollow" };
@@ -57,6 +57,21 @@ describe("owner links /rx and /r (V10-V13, D.6)", () => {
     const replay = await t.webhook(approvedEvent("WH-R1", t.charge.paypal_order_id, t.charge.id));
     expect(await replay.json()).toEqual({ status: "duplicate" });
     expect(await t.msgCount()).toBe(before + 1);
+    // m6: PayPal also sends PAYMENT.CAPTURE.COMPLETED for the same capture under another event id.
+    const dup = await t.webhook(captureCompletedEvent("WH-R1b", "CAP-1", t.charge.id, "1081.00"));
+    expect(dup.status).toBe(200);
+    expect(await t.msgCount()).toBe(before + 1);
+    expect(await env.DB.prepare("SELECT COUNT(*) AS n FROM delivery_tokens WHERE consult_id = ?1 AND kind = 'report'").bind(t.consult).first<{ n: number }>()).toEqual({ n: 2 });
+  });
+
+  it("M1: two concurrent deliveries of the same event settle once (one message, one new token)", async () => {
+    const t = await approved("1081.00");
+    const before = await t.msgCount();
+    const ev = approvedEvent("WH-C1", t.charge.paypal_order_id, t.charge.id);
+    const results = await Promise.all([t.webhook(ev), t.webhook(ev)]);
+    expect(results.map((r) => r.status)).toEqual([200, 200]);
+    expect(await t.msgCount()).toBe(before + 1);
+    expect(await env.DB.prepare("SELECT COUNT(*) AS n FROM delivery_tokens WHERE consult_id = ?1 AND kind = 'report'").bind(t.consult).first<{ n: number }>()).toEqual({ n: 2 });
   });
 
   it("V12: capture with a different amount → amount_mismatch, /r stays 402, no message", async () => {
@@ -92,8 +107,11 @@ describe("owner links /rx and /r (V10-V13, D.6)", () => {
       expect([rxToken, reportToken]).not.toContain(r.token_sha256);
     }
     // Expiry: 31 days later the same links are gone.
-    const later = makeApp(fakes(), new Date(Date.now() + 31 * 24 * 3600 * 1000));
+    const later = makeApp(fakes(), new Date(NOW.getTime() + 31 * 24 * 3600 * 1000));
     expect((await later.app.request(new URL(t.out.rx_url).pathname, {}, doctorEnv())).status).toBe(404);
+    expect((await later.app.request(new URL(t.out.report_url).pathname, {}, doctorEnv())).status).toBe(404);
+    const stillValid = makeApp(fakes(), new Date(NOW.getTime() + 29 * 24 * 3600 * 1000));
+    expect((await stillValid.app.request(new URL(t.out.rx_url).pathname, {}, doctorEnv())).status).toBe(200);
     const all = logs.lines.join("\n");
     expect(all).not.toContain(rxToken);
     expect(all).not.toContain(reportToken);

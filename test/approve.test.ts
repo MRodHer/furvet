@@ -86,6 +86,11 @@ describe("POST /approve (V7-C, V8, V9, D.4)", () => {
     expect(msgs).toContain("881.00");
     expect((await env.DB.prepare("SELECT status FROM consults WHERE id = ?1").bind(consult).first<{ status: string }>())?.status).toBe("approved");
     expect(await count("delivery_tokens", "consult_id = ?1", consult)).toBe(2);
+    // B1: the approved clinical body is evidence in the append-only consult_versions, same batch.
+    const version = await env.DB.prepare("SELECT body, created_by FROM consult_versions WHERE consult_id = ?1 AND kind = 'approved'").bind(consult).first<{ body: string; created_by: string }>();
+    expect(version?.created_by).toBe("val");
+    expect(JSON.parse(version!.body).prescription[0].medicamento.value).toBe("amoxicilina");
+    expect(await count("consult_versions", "consult_id = ?1 AND kind = 'approved'", consult)).toBe(1);
     const tokenRow = await env.DB.prepare("SELECT token_sha256 FROM delivery_tokens WHERE consult_id = ?1 AND kind = 'rx'").bind(consult).first<{ token_sha256: string }>();
     expect(tokenRow!.token_sha256).toMatch(/^[0-9a-f]{64}$/);
     expect(msgs).not.toContain(tokenRow!.token_sha256);
@@ -106,6 +111,27 @@ describe("POST /approve (V7-C, V8, V9, D.4)", () => {
     expect((await messages(conv)).results.length).toBe(before.msgs);
     expect(calls.filter((c) => c.key === PP.orders).length).toBe(before.orders);
     expect(await count("charges", "consult_id = ?1", consult)).toBe(1);
+    expect(await count("consult_versions", "consult_id = ?1 AND kind = 'approved'", consult)).toBe(1);
+  });
+
+  it("B2: a retried approval reuses the SAME charge id as custom_id (PayPal returns the first order for the same Request-Id)", async () => {
+    const { consult, ids } = await seedConsult();
+    const { app, calls } = makeApp(fakes());
+    const [a, b] = await Promise.all([post(app, consult, approvedBody(ids)), post(app, consult, approvedBody(ids))]);
+    expect([a.status, b.status].sort()).toEqual([201, 409]);
+    const customIds = calls.filter((c) => c.key === PP.orders).map((c) => JSON.parse(c.body).purchase_units[0].custom_id);
+    expect(new Set(customIds).size).toBe(1);
+    const charge = await env.DB.prepare("SELECT id FROM charges WHERE consult_id = ?1").bind(consult).first<{ id: string }>();
+    expect(charge?.id).toBe(customIds[0]);
+    expect(await count("consult_bills", "consult_id = ?1", consult)).toBe(1);
+    expect(await count("delivery_tokens", "consult_id = ?1", consult)).toBe(2);
+  });
+
+  it("m2: an item present in billable AND mapped from the prescription is billed once", async () => {
+    const { consult, ids } = await seedConsult();
+    const { app } = makeApp(fakes());
+    const preview = await app.request(`/api/v1/consults/${consult}/bill-preview`, { method: "POST", headers: doctorHeaders({ "Content-Type": "application/json" }), body: JSON.stringify(approvedBody(ids)) }, doctorEnv());
+    expect(await preview.json()).toMatchObject({ total_cents: 45000 + 38050 + 12525 });
   });
 
   it("V8: the catalog price at approval time decides the total (the model never carries a price)", async () => {
@@ -114,8 +140,8 @@ describe("POST /approve (V7-C, V8, V9, D.4)", () => {
     const { app } = makeApp(fakes());
     const preview = await app.request(`/api/v1/consults/${consult}/bill-preview`, { method: "POST", headers: doctorHeaders({ "Content-Type": "application/json" }), body: JSON.stringify(approvedBody(ids)) }, doctorEnv());
     expect(preview.status).toBe(200);
-    // consulta 450.00 + vacuna 380.50 + amoxi via billable 300.00 + amoxi via rx mapping 300.00
-    expect(await preview.json()).toMatchObject({ total_cents: 45000 + 38050 + 30000 + 30000, deposit_cents: 0 });
+    // consulta 450.00 + vacuna 380.50 + amoxi 300.00 (billable; the rx mapping of the same item is not billed twice)
+    expect(await preview.json()).toMatchObject({ total_cents: 45000 + 38050 + 30000, deposit_cents: 0 });
     expect(await count("consult_bills", "consult_id = ?1", consult)).toBe(0);
   });
 
@@ -130,6 +156,7 @@ describe("POST /approve (V7-C, V8, V9, D.4)", () => {
     expect(await count("charges", "consult_id = ?1", consult)).toBe(0);
     const text = (await messages(conv)).results.map((m) => m.text).join("\n");
     expect(text).toMatch(/Informe completo: https:\/\/furvet\.test\/r\/[A-Za-z0-9_-]{43}$/m);
+    expect((await env.DB.prepare("SELECT status FROM consults WHERE id = ?1").bind(consult).first<{ status: string }>())?.status).toBe("delivered");
   });
 
   it("fail-closed: balance > 0 without PayPal configured → 503 before any write", async () => {

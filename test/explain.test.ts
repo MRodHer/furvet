@@ -10,8 +10,14 @@ describe("plain explanation (V14, V8)", () => {
   it("validator: numbers and doses must exist in the approved JSON", () => {
     const facts = approvedValues(body);
     expect(explanationViolations("Firulais tiene 39.5 grados; amoxicilina 250 mg cada 12 h por 7 días.", facts)).toBeNull();
-    expect(explanationViolations("Dele 20 mg cada 8 horas.", facts)).toEqual(["20", "8", "20 mg"]);
+    expect(explanationViolations("Dele 20 mg cada 8 horas.", facts)).toEqual(["20", "8", "20 mg", "cada 8 horas"]);
+    expect(explanationViolations("dieta blanda 3 días", facts)).toBeNull(); // from the approved plan
     expect(explanationViolations("Pesa 12,4 kg", facts)).toBeNull(); // comma decimal normalised
+    // M4: swapped frequency/duration, a dose that is only a substring, a drug that was never prescribed
+    expect(explanationViolations("amoxicilina 250 mg cada 7 h por 12 días", facts)).toEqual(["cada 7 h", "12 días"]);
+    expect(explanationViolations("tome 50 mg", facts)).toEqual(["50", "50 mg"]);
+    expect(explanationViolations("también metronidazol como indicó", facts)).toEqual(["metronidazol"]);
+    expect(JSON.stringify(facts)).not.toContain("catalog_item_id");
   });
 
   it("V14: an invented dose → one retry → still bad → fixed template without AI (exactly 2 calls)", async () => {

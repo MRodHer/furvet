@@ -7,7 +7,7 @@ import type { Env } from "./env";
 import { log } from "./log";
 import { timingSafeEqual } from "./prior/hmac";
 
-async function sha256Hex(s: string): Promise<string> {
+export async function sha256Hex(s: string): Promise<string> {
   const d = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(s));
   return Array.from(new Uint8Array(d), (b) => b.toString(16).padStart(2, "0")).join("");
 }

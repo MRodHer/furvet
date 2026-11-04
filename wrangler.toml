@@ -44,3 +44,6 @@ AUDIO_DAILY_SECONDS_CAP = "7200"
 
 [observability]
 enabled = true
+# Invocation logs record "<METHOD> <URL>"; /r/<token> and /rx/<token> must never be logged (V13).
+[observability.logs]
+invocation_logs = false

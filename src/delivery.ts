@@ -1,13 +1,9 @@
 // Delivery tokens (hash at rest) and outbound chat messages for the owner.
+import { sha256Hex } from "./auth";
 
 export type TokenKind = "rx" | "report";
 export const TOKEN_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 const MESSAGE_MAX = 4000; // messages.text CHECK
-
-export async function sha256Hex(text: string): Promise<string> {
-  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
-  return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
-}
 
 /** 256-bit token, base64url. Only its sha256 is stored. */
 export async function newToken(): Promise<{ token: string; hash: string }> {

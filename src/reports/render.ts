@@ -4,6 +4,8 @@ import type { CleanImage } from "../images";
 import type { Block } from "./pdf";
 
 export interface ReportHeader {
+  /** Shown in the footer when the plain-language text came from the model, not the doctor. */
+  explanationByAi?: boolean;
   clinicName: string;
   doctorName: string;
   licenseLabel: string;
@@ -31,7 +33,8 @@ function header(h: ReportHeader, title: string): Block[] {
 }
 
 function footer(h: ReportHeader): Block[] {
-  return [{ kind: "small", text: `Generado con asistencia de IA y revisado/aprobado por el médico el ${h.approvedAt.slice(0, 10)}. No sustituye la atención presencial.` }];
+  const ai = h.explanationByAi ? " La sección «En palabras sencillas» fue redactada automáticamente a partir del contenido aprobado." : "";
+  return [{ kind: "small", text: `Contenido clínico revisado y aprobado por el médico el ${h.approvedAt.slice(0, 10)}, con asistencia de IA.${ai} No sustituye la atención presencial.` }];
 }
 
 export function prescriptionLines(body: ApprovedConsult): string[] {

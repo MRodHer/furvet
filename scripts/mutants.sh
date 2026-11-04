@@ -33,10 +33,12 @@ run_mutant "bill balance may go negative" src/billing.ts \
   's/balanceCents: Math.max(totalCents - depositCents, 0)/balanceCents: totalCents - depositCents/' test/billing.test.ts || status=1
 run_mutant "report gate accepts any charge status" src/routes/report.ts \
   's/if (charge?.status !== "captured") {/if (!charge) {/' test/report.test.ts || status=1
-# Two barriers assert the same fact (JS status check + SQL EXISTS guard): each alone is an
-# equivalent mutant, so the control removes BOTH and must still go red (V12).
+# Two barriers assert the same fact (JS status check + "this batch inserted the event" guard): each
+# alone is an equivalent mutant, so the control removes BOTH and must still go red (V12).
 run_mutant "webhook releases the report on a mismatch (both barriers removed)" src/routes/webhook.ts \
-  "s/if (status === \"captured\" \&\& charge.kind === \"balance\"/if (charge.kind === \"balance\"/; s/paypal_event_id = ?\${n} AND status = 'captured')/paypal_event_id = ?\${n})/" test/report.test.ts || status=1
+  's/if (status === "captured" \&\& charge.kind === "balance"/if (charge.kind === "balance"/; s/tokenInsert(env.DB, hash, charge.consult_id, "report", new Date(), "changes() = 1")/tokenInsert(env.DB, hash, charge.consult_id, "report", new Date())/' test/report.test.ts || status=1
+run_mutant "explanation dose tokens matched as substrings" src/reports/explain.ts \
+  's/(?<!\[\\\\d.,\])\${esc(squash(tok))}(?!\[a-z\/\])/${esc(squash(tok))}/' test/explain.test.ts || status=1
 run_mutant "explanation validator ignores numbers" src/reports/explain.ts \
   's/const bad = numbersIn(text).filter((n) => !allowedNumbers.has(n));/const bad: string[] = [];/' test/explain.test.ts || status=1
 run_mutant "jpeg metadata kept" src/images.ts \

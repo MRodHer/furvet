@@ -41,6 +41,7 @@ function stripJpeg(b: Uint8Array): CleanImage {
   let width = 0;
   let height = 0;
   let components: 1 | 3 | undefined;
+  let sawEoi = false;
   while (i + 4 <= b.length) {
     if (b[i] !== 0xff) throw new ImageError("corrupt jpeg", 415);
     const marker = b[i + 1] ?? 0;
@@ -62,10 +63,18 @@ function stripJpeg(b: Uint8Array): CleanImage {
     if (!isApp && !isComment) out.push(segment);
     i += 2 + len;
     if (marker === 0xda) {
-      out.push(b.subarray(i)); // entropy-coded data up to EOI
-      break;
+      // Entropy-coded data: runs until the next real marker (0xFF followed by neither 0x00 nor RSTn).
+      const start = i;
+      while (i + 1 < b.length && !(b[i] === 0xff && b[i + 1] !== 0x00 && !((b[i + 1] ?? 0) >= 0xd0 && (b[i + 1] ?? 0) <= 0xd7))) i += 1;
+      out.push(b.subarray(start, i));
+      if (b[i + 1] === 0xd9) {
+        out.push(new Uint8Array([0xff, 0xd9]));
+        sawEoi = true;
+        break; // anything after EOI (motion-photo video, MPF secondary images) is dropped
+      }
     }
   }
+  if (!sawEoi) throw new ImageError("corrupt jpeg", 415);
   if (!width || !height) throw new ImageError("corrupt jpeg", 415);
   if (!components) throw new ImageError("jpeg must be grey or colour (no CMYK)", 415);
   return { mime: "image/jpeg", bytes: concat(out), width, height, jpegComponents: components };
