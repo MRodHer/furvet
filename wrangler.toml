@@ -26,8 +26,10 @@ binding = "AI"
 [assets]
 directory = "./public"
 binding = "ASSETS"
-# The doctor console and the ledger board are served by the Worker (behind HTTP Basic), never as bare static assets.
-run_worker_first = ["/console", "/console/*", "/cobros", "/cobros/*", "/cobros.html"]
+# Every request enters the Worker first: static pages are served through Hono's notFound handler so the
+# ONE secureHeaders() (CSP, frame-ancestors, HSTS, nosniff) covers assets too, and the doctor console and the
+# ledger board are reached only behind HTTP Basic (pentest M1/M2).
+run_worker_first = true
 
 [vars]
 # The app refuses every request unless this is exactly "sandbox" (fail-closed).

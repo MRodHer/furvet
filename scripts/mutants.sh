@@ -152,4 +152,8 @@ run_mutant "rx link back in the owner's chat (ADENDA 2)" src/routes/approve.ts \
   's|"La receta te la entrega la doctora impresa y firmada.",|"La receta te la entrega la doctora impresa y firmada.", `Receta en PDF: ${base}/rx/${ticket.token}`,|' test/approve.test.ts || status=1
 run_mutant "rx section back in the owner's report (ADENDA 2)" src/reports/render.ts \
   's|  // No rx section here: the prescription is printed and signed by the doctor, never delivered to the owner (ADENDA 2).|  out.push({ kind: "h2", text: "Receta" }, ...prescriptionLines(body).map((text) => ({ kind: "p" as const, text })));|' test/report.test.ts || status=1
+run_mutant "static assets bypass secureHeaders (pentest M1)" src/app.ts \
+  's|app.notFound((c) => (c.req.method === "GET" \|\| c.req.method === "HEAD" ? serveAsset(c.env, c.req.raw) : c.text("404 Not Found", 404)));|app.notFound((c) => c.env.ASSETS.fetch(c.req.raw));|' test/app.test.ts || status=1
+run_mutant "CSP header without frame-ancestors (pentest M2)" src/app.ts \
+  "s|        frameAncestors: \[\"'none'\"\],||" test/app.test.ts || status=1
 exit $status
