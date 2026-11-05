@@ -16,6 +16,9 @@ Per Cloudflare's Workers AI data-usage documentation (<https://developers.cloudf
 - Retention of transcripts for the demo: purge after the judging period (the D1 database is dropped). A production deployment should document a purge schedule.
 
 ## Doctor console
+
+The clinic subscription webhooks are stored without the `subscriber` block (name, e-mail): only subscription ids, amounts, states and times.
+
 HTTP Basic over HTTPS with a single demo credential (rotated after judging). The account can read consults and approve records; it cannot edit the catalog or prices. See `SECURITY.md` / README.
 
 - The prescription PDF (`rx.pdf`, in R2 under the approval id) carries the owner's name and the pet's data so the doctor can print and sign it. It is served only to the doctor's credential (`GET /api/v1/consults/:id/rx.pdf`), never through an owner link, and keeps the same retention as the report. The account ticket (`ticket.pdf`) carries no owner data.

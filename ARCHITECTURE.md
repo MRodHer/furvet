@@ -78,9 +78,10 @@ src/
   reports/  render.ts  pdf.ts  explain.ts         # PDF de texto plano; explicación validada
   routes/   webhook approve charges consults report sim
   prior/    hmac.ts  text.ts                      # ayudantes previos al proyecto (ver README)
-  images.ts  delivery.ts
-migrations/ 0001_… 0002_… 0003_…                   # forward-only, numeradas
-scripts/    checks.sh  mutants.sh
+  images.ts  delivery.ts  subscription.ts         # suscripción de la clínica (candado de la IA)
+  routes/subscription.ts
+migrations/ 0001_… 0002_… 0003_… 0004_… 0005_…     # forward-only, numeradas
+scripts/    checks.sh  mutants.sh  paypal-plan.sh  # paypal-plan.sh: GATED, crea producto+plan en sandbox
 test/       *.test.ts  helpers.ts  apply-migrations.ts
 ```
 
@@ -164,7 +165,7 @@ El orden de comprobación es fijo y se prueba: configuración → autenticación
 - Vitest con el pool de Workers: las pruebas corren **dentro** de workerd con D1 local real y las migraciones aplicadas. Nada se simula de la plataforma.
 - `npm test` = `scripts/checks.sh` **y luego** la suite. Los checks estáticos fallan antes de correr un solo test.
 - Un test por cláusula del contrato de aceptación; el nombre del test lleva el identificador de la cláusula.
-- Medido (feat/rx-ticket, 2026-11-04): 19 archivos de prueba; 45 mutantes en `scripts/mutants.sh`.
+- Medido (feat/clinic-subscription, 2026-11-04): 21 archivos de prueba; 69 mutantes en `scripts/mutants.sh`.
 
 ### 7.2 Checks estáticos (`scripts/checks.sh`)
 
@@ -205,6 +206,7 @@ Las seis sondas de R122 (§13.16) son: firma inválida, replay, monto alterado, 
 6. **El tratamiento no espera al pago.** Aprobar escribe la factura y envía las instrucciones urgentes y la cuenta (ticket) en un batch, sin llamar al proveedor; la receta la imprime y firma el médico desde la consola y nunca viaja al dueño (una receta digital se reimprime); el enlace de pago se genera después, idempotente (un cargo de saldo por consulta), y llega al chat sólo cuando **esta** petición creó el cargo.
 7. **Precios desde el servidor**: el cuerpo aprobado lleva ids de catálogo y cantidades; los precios unitarios se copian del catálogo a líneas append-only; total − depósito capturado = saldo. Un catálogo sin precio se rehúsa a cobrar y `/health` lo reporta.
 8. Una orden de pago no es un comprobante fiscal; los precios son montos con impuestos incluidos fijados por la clínica.
+9. **La clínica paga la IA con una suscripción** (PayPal Subscriptions, `subscriptions`/`subscription_events` append-only + vista `subscription_current`). El `plan_id` y el precio (`SUBSCRIPTION_PRICE_CENTS`) viven en el servidor; el body de `/subscription/start` es `.strict()` vacío. Sólo un webhook verificado cuyo `subscription id` sea el nuestro, cuyo `plan_id` sea el configurado y cuyo monto **y** moneda igualen el precio pasa a `active` (ACTIVATED con su `last_payment`, o el primer `PAYMENT.SALE.COMPLETED` desde `approval_pending`); un desajuste es `amount_mismatch` y no activa. `POST /consults/:id/fill` responde 402 `subscription_required` sin suscripción activa y 503 si no puede leerla; `SUBSCRIPTION_REQUIRED` sólo apaga el candado con el texto exacto `"false"`.
 
 ## 10. Ciclo de trabajo
 

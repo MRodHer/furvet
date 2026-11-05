@@ -259,6 +259,20 @@ export const uniqueOrderFake = {
   },
 };
 
+/** The clinic's subscription in a given state (default active), seeded like a verified webhook would leave it. */
+export async function seedSubscription(state: "approval_pending" | "active" | "suspended" | "cancelled" | "expired" = "active", opts: { paypalId?: string } = {}) {
+  const id = crypto.randomUUID();
+  const paypalId = opts.paypalId ?? `I-${id.slice(0, 13).toUpperCase()}`;
+  await env.DB.batch([
+    // One clinic, one subscription: seeding a non-active state means no other row is active either.
+    ...(state === "active" ? [] : [env.DB.prepare("INSERT INTO subscription_events (subscription_id, kind, state, raw) SELECT id, 'cancelled', 'cancelled', '{}' FROM subscription_current WHERE state = 'active'")]),
+    env.DB.prepare("INSERT INTO subscriptions (id, paypal_subscription_id, plan_id, amount_cents, currency, approve_url) VALUES (?1, ?2, ?3, 99900, 'MXN', 'https://www.sandbox.paypal.com/webapps/billing/subscriptions?ba_token=BA-TEST')").bind(id, paypalId, env.PAYPAL_PLAN_ID ?? "P-TEST"),
+    env.DB.prepare("INSERT INTO subscription_events (subscription_id, kind, state, raw) VALUES (?1, 'created', 'approval_pending', '{}')").bind(id),
+    ...(state === "approval_pending" ? [] : [env.DB.prepare("INSERT INTO subscription_events (subscription_id, kind, state, raw) VALUES (?1, ?2, ?3, '{}')").bind(id, state === "active" ? "activated" : state, state)]),
+  ]);
+  return { id, paypalId };
+}
+
 export function claudeToolFake(texts: string[]) {
   let n = 0;
   return {

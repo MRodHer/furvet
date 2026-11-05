@@ -45,6 +45,11 @@ CLINIC_PHONE = "55 0000 0000"
 CLINIC_EMAIL = "contacto@furvet.example"
 DOCTOR_DISPLAY_NAME = "MVZ (demo)"
 DOCTOR_LICENSE_LABEL = "Cédula profesional: DEMO"
+# Clinic subscription (PayPal Subscriptions, sandbox). The plan id is public and comes from
+# scripts/paypal-plan.sh; pass it at deploy: `wrangler deploy --var PAYPAL_PLAN_ID:P-…`. Empty ⇒ 503 on /start.
+PAYPAL_PLAN_ID = ""
+# "Llenar con IA" needs an active subscription. Emergency switch: only the exact text "false" turns the gate off.
+SUBSCRIPTION_REQUIRED = "true"
 # Audio: 30 min at 32 kbps ≈ 7.2 MB. Daily transcription budget in seconds (free tier ≈ 214 min).
 MAX_AUDIO_BYTES = "8000000"
 AUDIO_DAILY_SECONDS_CAP = "7200"

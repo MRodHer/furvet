@@ -21,6 +21,7 @@ export default defineConfig(async () => {
             PUBLIC_BASE_URL: "https://furvet.test",
             DOCTOR_DEMO_USER: "doctor",
             DOCTOR_DEMO_PASSWORD: "test-doctor-pass",
+            PAYPAL_PLAN_ID: "P-TESTPLAN00000000000000",
           },
         },
       }),

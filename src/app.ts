@@ -9,6 +9,7 @@ import { chargesRoutes } from "./routes/charges";
 import { consultsRoutes } from "./routes/consults";
 import { reportRoutes } from "./routes/report";
 import { simRoutes } from "./routes/sim";
+import { subscriptionRoutes } from "./routes/subscription";
 import { webhookRoutes } from "./routes/webhook";
 
 /** Builds the Worker app. Tests pass fake deps; production passes real fetch. */
@@ -71,6 +72,7 @@ export function createApp(deps: Deps = DEFAULT_DEPS) {
 
   app.route("/api/v1/paypal/webhook", webhookRoutes(paypalFor));
   app.route("/api/v1/charges", chargesRoutes());
+  app.route("/api/v1/subscription", subscriptionRoutes(deps, paypalFor));
   app.route("/api/v1/sim", simRoutes(deps, paypalFor));
   app.route("/api/v1/consults", consultsRoutes(deps));
   app.route("/api/v1/consults", approveRoutes(deps, paypalFor));

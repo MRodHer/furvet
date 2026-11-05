@@ -20,6 +20,10 @@ export interface Env {
   MAX_AUDIO_BYTES: string;
   AUDIO_DAILY_SECONDS_CAP: string;
   DOCTOR_DISPLAY_NAME: string;
+  /** PayPal Subscriptions plan id (public, `P-…`); empty ⇒ /subscription/start answers 503. Set with `--var` at deploy. */
+  PAYPAL_PLAN_ID?: string;
+  /** AI gate switch. Anything but the exact text "false" keeps the gate ON (default safe). */
+  SUBSCRIPTION_REQUIRED?: string;
   DOCTOR_LICENSE_LABEL: string;
   // secrets (wrangler secret put)
   ANTHROPIC_API_KEY?: string;

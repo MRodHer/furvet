@@ -17,6 +17,7 @@ import { messageInserts, newToken, tokenInsert } from "../delivery";
 import { readCapped } from "../body";
 import { valueToCents } from "../money";
 import { errName, log } from "../log";
+import { handleSubscriptionEvent } from "../subscription";
 
 const MAX_BODY_BYTES = 64 * 1024;
 export const DEPOSIT_CONFIRMED_TEXT = "¡Recibimos tu pago de anticipo! Tu cita quedó confirmada. 🐾";
@@ -75,7 +76,7 @@ export function webhookRoutes(paypalFor: (env: Env) => PayPalClient | null) {
     if (!parsed.success) return c.json({ error: "invalid event" }, 400);
     const event = parsed.data;
 
-    const seen = await env.DB.prepare("SELECT 1 AS x FROM charge_events WHERE paypal_event_id = ?1").bind(event.id).first();
+    const seen = await env.DB.prepare("SELECT 1 AS x FROM charge_events WHERE paypal_event_id = ?1 UNION ALL SELECT 1 FROM subscription_events WHERE paypal_event_id = ?1").bind(event.id).first();
     if (seen) {
       log("paypal_webhook_duplicate", { event_id: event.id });
       return c.json({ status: "duplicate" });
@@ -149,8 +150,11 @@ export function webhookRoutes(paypalFor: (env: Env) => PayPalClient | null) {
         log("paypal_webhook_processed", { event_id: event.id, charge_id: charge.id, status });
         return c.json({ status });
       }
-      default:
-        return c.json({ status: "ignored" });
+      default: {
+        // The clinic's own subscription (BILLING.SUBSCRIPTION.* and PAYMENT.SALE.COMPLETED).
+        const status = await handleSubscriptionEvent(env, event);
+        return c.json({ status: status ?? "ignored" });
+      }
     }
   });
 

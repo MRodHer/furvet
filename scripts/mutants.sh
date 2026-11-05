@@ -139,7 +139,7 @@ run_mutant "second capture re-settles (H7, code barrier)" src/routes/webhook.ts 
 run_mutant "capture naming a foreign order accepted (H8 cross-check removed)" src/routes/webhook.ts \
   's/if (!charge || (relatedOrder !== undefined \&\& relatedOrder !== charge.paypal_order_id)) {/if (!charge) {/' test/hardening.test.ts || status=1
 run_mutant "nested shipping kept in webhook evidence (H9)" src/ledger.ts \
-  's/const PII_KEYS = new Set(\["payer", "payment_source", "payee", "shipping"\]);/const PII_KEYS = new Set(["payer", "payment_source", "payee"]);/' test/hardening.test.ts || status=1
+  's/const PII_KEYS = new Set(\["payer", "payment_source", "payee", "shipping", "subscriber"\]);/const PII_KEYS = new Set(["payer", "payment_source", "payee", "subscriber"]);/' test/hardening.test.ts || status=1
 run_mutant "owner-sourced medication still billed (BB3 flag ignored)" src/routes/approve.ts \
   's/if (m.catalog_item_id \&\& !m.owner_sourced \&\& !billed.has(m.catalog_item_id))/if (m.catalog_item_id \&\& !billed.has(m.catalog_item_id))/' test/approve.test.ts || status=1
 run_mutant "quantity above 100 accepted (BB4)" src/billing.ts \
@@ -156,4 +156,33 @@ run_mutant "static assets bypass secureHeaders (pentest M1)" src/app.ts \
   's|app.notFound((c) => (c.req.method === "GET" \|\| c.req.method === "HEAD" ? serveAsset(c.env, c.req.raw) : c.text("404 Not Found", 404)));|app.notFound((c) => c.env.ASSETS.fetch(c.req.raw));|' test/app.test.ts || status=1
 run_mutant "CSP header without frame-ancestors (pentest M2)" src/app.ts \
   "s|        frameAncestors: \[\"'none'\"\],||" test/app.test.ts || status=1
+# ---- clinic subscription (Constructora C, feat-clinic-subscription) ----
+run_mutant "subscription money gate ignores the amount (998.00 activates)" src/subscription.ts \
+  's/const amountOk = paid !== null \&\& paid.amountCents === sub.amount_cents \&\& paid.currency === sub.currency;/const amountOk = paid !== null \&\& paid.currency === sub.currency;/' test/subscription.test.ts || status=1
+run_mutant "subscription money gate ignores the currency (999.00 USD activates)" src/subscription.ts \
+  's/const amountOk = paid !== null \&\& paid.amountCents === sub.amount_cents \&\& paid.currency === sub.currency;/const amountOk = paid !== null \&\& paid.amountCents === sub.amount_cents;/' test/subscription.test.ts || status=1
+run_mutant "subscription webhook stops matching OUR paypal_subscription_id (any row)" src/subscription.ts \
+  's/const sub = await currentSubscription(env.DB, "paypal_subscription_id = ?1", subId);/const sub = await currentSubscription(env.DB);/' test/subscription.test.ts || status=1
+run_mutant "a sale resurrects a cancelled subscription" src/subscription.ts \
+  's/state = amountOk \&\& sub.state === "approval_pending" ? "active" : null;/state = amountOk \&\& sub.state !== "active" ? "active" : null;/' test/subscription.test.ts || status=1
+run_mutant "SUBSCRIPTION_REQUIRED default flips to OFF" src/subscription.ts \
+  's/return env.SUBSCRIPTION_REQUIRED !== "false";/return env.SUBSCRIPTION_REQUIRED === "true";/' test/subscription.test.ts || status=1
+run_mutant "AI gate removed from /fill" src/routes/consults.ts \
+  's/if (subscriptionRequired(env)) {/if (false) {/' test/subscription.test.ts || status=1
+run_mutant "AI gate passes when the subscription store fails" src/routes/consults.ts \
+  's/return c.json({ error: "subscription check unavailable" }, 503);/active = true;/' test/subscription.test.ts || status=1
+run_mutant "/start body accepts extra keys (plan_id from the client)" src/routes/subscription.ts \
+  's/const StartBody = z.object({}).strict();/const StartBody = z.object({});/' test/subscription.test.ts || status=1
+run_mutant "approve link checked by protocol only (look-alike host passes)" src/routes/subscription.ts \
+  's/if (new URL(sub.approveUrl).origin !== APPROVE_ORIGIN) {/if (new URL(sub.approveUrl).protocol !== "https:") {/' test/subscription.test.ts || status=1
+run_mutant "webhook seen-check ignores subscription_events (replay re-processed)" src/routes/webhook.ts \
+  's/ UNION ALL SELECT 1 FROM subscription_events WHERE paypal_event_id = ?1//' test/subscription.test.ts || status=1
+run_mutant "gate, GET and /start read only the latest row (a paid older subscription is ignored, /start creates another)" src/subscription.ts \
+  "s/ORDER BY (state = 'active') DESC, seq DESC LIMIT 1/ORDER BY seq DESC LIMIT 1/" test/subscription.test.ts || status=1
+run_mutant "a late ACTIVATED reopens a cancelled or expired subscription" src/subscription.ts \
+  's/if (sub.state === "cancelled" || sub.state === "expired") {/if (false) {/' test/subscription.test.ts || status=1
+run_mutant "ACTIVATED stops checking the plan id" src/subscription.ts \
+  's/if (planId !== sub.plan_id) {/if (false) {/' test/subscription.test.ts || status=1
+run_mutant "a sale activates whatever its amount" src/subscription.ts \
+  's/state = amountOk \&\& sub.state === "approval_pending" ? "active" : null;/state = sub.state === "approval_pending" ? "active" : null;/' test/subscription.test.ts || status=1
 exit $status

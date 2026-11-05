@@ -3,7 +3,7 @@
 *Because every patient is someone's fur bestie.* Families pay with PayPal; the clinic keeps the clinical record and the money honest.
 
 > Built for the PayPal AI Hackathon 2026. Runs 100% in PayPal **sandbox**: no real money moves.
-> Everything described below as *built* is in this repository, covered by the test suite (177 tests) and deployed at the live URL. The two items marked *not built* are the only parts of the vision that are not in the code.
+> Everything described below as *built* is in this repository, covered by the test suite (198 tests) and deployed at the live URL. The two items marked *not built* are the only parts of the vision that are not in the code.
 
 **Live demo:** <https://furvet.mauricio-rodher.workers.dev> · **Video:** `<YouTube URL>`
 
@@ -68,11 +68,11 @@ npx wrangler d1 execute furvet --local --file=seed.sql
 # until the clinic sets its prices (cents, tax included):
 npx wrangler d1 execute furvet --local --command "UPDATE catalog_items SET price_cents = 20000 WHERE sku = 'ANTICIPO-CONSULTA'; UPDATE catalog_items SET price_cents = 45000 WHERE sku = 'CONSULTA-GENERAL'"
 npm run dev                              # http://localhost:8787/sim · /console and /cobros behind the doctor credential
-npm test                                 # static checks (scripts/checks.sh) + 177 Vitest tests on a real local D1
-bash scripts/mutants.sh                  # 53 injected defects; each must turn the suite red
+npm test                                 # static checks (scripts/checks.sh) + 198 Vitest tests on a real local D1
+bash scripts/mutants.sh                  # 69 injected defects; each must turn the suite red
 ```
 
-Deploy: `npx wrangler d1 create furvet` (paste the id into `wrangler.toml`), `npx wrangler r2 bucket create furvet-files`, `npx wrangler secret put` for each secret listed in `wrangler.toml`, `npm run db:migrate:remote`, seed and price the remote catalog the same way with `--remote`, `npm run deploy`. Register the webhook URL `https://<worker>/api/v1/paypal/webhook` in the PayPal sandbox app with `CHECKOUT.ORDER.APPROVED`, `PAYMENT.CAPTURE.COMPLETED`, `PAYMENT.CAPTURE.DENIED`.
+Deploy: `npx wrangler d1 create furvet` (paste the id into `wrangler.toml`), `npx wrangler r2 bucket create furvet-files`, `npx wrangler secret put` for each secret listed in `wrangler.toml`, `npm run db:migrate:remote`, seed and price the remote catalog the same way with `--remote`, `npm run deploy`. Register the webhook URL `https://<worker>/api/v1/paypal/webhook` in the PayPal sandbox app with `CHECKOUT.ORDER.APPROVED`, `PAYMENT.CAPTURE.COMPLETED`, `PAYMENT.CAPTURE.DENIED`, and for the clinic subscription `BILLING.SUBSCRIPTION.ACTIVATED`, `BILLING.SUBSCRIPTION.SUSPENDED`, `BILLING.SUBSCRIPTION.CANCELLED`, `BILLING.SUBSCRIPTION.EXPIRED`, `BILLING.SUBSCRIPTION.PAYMENT.FAILED`, `PAYMENT.SALE.COMPLETED`. Clinic subscription (the AI draft is gated on it): create the plan once with `PAYPAL_CLIENT_ID=… PAYPAL_CLIENT_SECRET=… bash scripts/paypal-plan.sh` ($999.00 MXN/month, sandbox) and deploy with `--var PAYPAL_PLAN_ID:P-…`; `--var SUBSCRIPTION_REQUIRED:false` switches the gate off in an emergency (default on).
 
 ## Security — what is verified and why
 
@@ -93,7 +93,7 @@ Deploy: `npx wrangler d1 create furvet` (paste the id into `wrangler.toml`), `np
 - **The AI can only cite, not invent.** Each proposed field carries segment ids and an exact quote; the server validator (no model) drops anything that is not a literal substring, any number absent from its quote, out-of-range vitals, and unknown catalog ids. A dose counts as grounded only with a number and a unit, in digits or in words («250 miligramos»). Drafts and approvals are append-only rows.
 - **Doctor console.** HTTP Basic (constant-time compare, 503 when unconfigured) in front of `/console`, `/cobros` and every `/api/v1/consults/*` and `/api/v1/charges/*` route; progressive per-origin lockout after 5 failed logins (IPv6 counted by /64, no global counter so a stranger cannot lock the doctor out, fail-closed when the counter is unreadable); CSP `default-src 'self'`; all transcript text rendered with `textContent`. Doctor writes carry a CSRF guard (`sameOriginWrite` in `src/auth.ts`): a request whose `Sec-Fetch-Site` is not `same-origin`/`none` or whose `Origin` differs from the request origin is refused (403), and the body must be JSON, `audio/*` or `multipart/form-data` (415 otherwise).
 - **One clinic time zone.** Every hour shown to a person (slots in the chat, the console) is formatted in `America/Mexico_City`; a static check forbids browser-zone formatting.
-- **Mutation control.** `scripts/mutants.sh` injects 53 money/validation defects (webhook amount and currency on both paths, signature verification, ledger claim, money parser, deposit schema, consent timestamp, post-model human re-check, grounding numbers and units, draft schema strictness, bill arithmetic, report gate, explanation validator, image metadata, inactive catalog items, deposit confirmation message, login lockout) and requires the tests to go red.
+- **Mutation control.** `scripts/mutants.sh` injects 69 money/validation defects (clinic subscription: amount and currency gate, own-subscription match, no resurrection by a sale, default-on switch, fail-closed gate, strict start body, approve-link origin, replay check; webhook amount and currency on both paths, signature verification, ledger claim, money parser, deposit schema, consent timestamp, post-model human re-check, grounding numbers and units, draft schema strictness, bill arithmetic, report gate, explanation validator, image metadata, inactive catalog items, deposit confirmation message, login lockout) and requires the tests to go red.
 - Rate limiting per IP (webhook, `/r/`, `/t/`) is configured at the Cloudflare edge (WAF rules), not in code; the app enforces a daily demo cap and a per-conversation cap. A PayPal order is not a CFDI (Mexican tax invoice); prices are tax-included amounts set by the clinic.
 
 ## AI tools used

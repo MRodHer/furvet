@@ -52,6 +52,29 @@
   };
 
   // ---------- 1. pick ----------
+  // Clinic subscription (card 0). The server decides; the console only reflects and disables.
+  let subscription = { status: "none", required: true };
+  async function loadSubscription() {
+    const res = await fetch("/api/v1/subscription");
+    if (!res.ok) { $("subState").textContent = `No se pudo leer la suscripción (${res.status}).`; return; }
+    subscription = await res.json();
+    const price = `${(subscription.price_cents / 100).toFixed(2)} ${subscription.currency}/mes`;
+    const LABEL = { none: "Sin suscripción", approval_pending: "Pendiente de aprobar en PayPal", active: "Activa", suspended: "Suspendida (pago fallido)", cancelled: "Cancelada", expired: "Vencida" };
+    const next = subscription.next_billing_at ? ` · próximo cobro ${clinicTime(subscription.next_billing_at)}` : "";
+    $("subState").textContent = `${LABEL[subscription.status] || subscription.status} · ${price}${next}${subscription.required ? "" : " · candado de IA APAGADO (SUBSCRIPTION_REQUIRED=false)"}`;
+    $("subBtn").classList.toggle("hidden", subscription.status === "active");
+    $("subBtn").textContent = subscription.status === "approval_pending" ? "Continuar en PayPal" : "Suscribirme con PayPal";
+  }
+  const aiAllowed = () => !subscription.required || subscription.status === "active";
+  $("subBtn").addEventListener("click", async () => {
+    $("subBtn").disabled = true;
+    const res = await fetch("/api/v1/subscription/start", { method: "POST", headers: { "Content-Type": "application/json" } });
+    let data = {}; try { data = await res.json(); } catch (e) { data = { error: e.name }; }
+    $("subBtn").disabled = false;
+    if (!res.ok) { $("subState").textContent = `No se pudo iniciar (${res.status}): ${data.error || ""}`; return; }
+    location.assign(data.approve_url); // host validated by the server (www.sandbox.paypal.com)
+  });
+
   async function loadAppointments() {
     const { ok, data } = await api("/appointments");
     const sel = $("apptSel");
@@ -309,11 +332,13 @@
     if (!disc.length) list.append(el("li", { class: "note", textContent: draft ? "Nada descartado." : "Nada todavía." }));
     for (const d of disc) list.append(el("li", {}, el("strong", { textContent: d.path }), `: ${REASON[d.reason] || d.reason} `, d.quote ? el("q", { textContent: d.quote }) : ""));
     $("fillState").textContent = draft ? `Borrador del ${clinicTime(draft.created_at)}` : "Sin borrador.";
+    if (!aiAllowed()) { $("fillBtn").disabled = true; $("fillState").textContent = "La IA está desactivada: la clínica no tiene suscripción activa (ver tarjeta 0)."; }
   }
   $("fillBtn").addEventListener("click", async () => {
     $("fillBtn").disabled = true; $("fillState").textContent = "Pidiendo el borrador a la IA…";
-    const { ok, data } = await api(`/${consultId}/fill`, { method: "POST" });
+    const { ok, status, data } = await api(`/${consultId}/fill`, { method: "POST" });
     $("fillBtn").disabled = false;
+    if (status === 402) { await loadSubscription(); $("fillBtn").disabled = true; $("fillState").textContent = "La IA está desactivada: la clínica no tiene suscripción activa (ver tarjeta 0)."; return; }
     if (!ok) { $("fillState").textContent = `No se pudo generar (${data.error || ""}). Intenta de nuevo.`; return; }
     await refresh();
   });
@@ -376,5 +401,6 @@
     await refresh();
   });
 
+  loadSubscription();
   loadAppointments();
 })();

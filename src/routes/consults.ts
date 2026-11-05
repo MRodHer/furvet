@@ -14,6 +14,7 @@ import { sniffAudio, transcribe, TranscribeError, WHISPER_MODEL } from "../clini
 import type { Deps, Env } from "../env";
 import { intVar } from "../env";
 import { errName, log } from "../log";
+import { isSubscriptionActive, subscriptionRequired } from "../subscription";
 
 export const DOCTOR_CONSENT_VERSION = "doctor-v1-2026-11-04";
 const AUDIO_BYTES_PER_SECOND = 4000; // 32 kbps, the console's recorder setting
@@ -230,6 +231,20 @@ export function consultsRoutes(deps: Deps) {
   app.post("/:id/fill", async (c) => {
     const env = c.env;
     if (!env.ANTHROPIC_API_KEY) return c.json({ error: "model not configured" }, 503);
+    // The clinic pays for the AI: no active subscription, no call to the model. Store down ⇒ deny.
+    if (subscriptionRequired(env)) {
+      let active: boolean;
+      try {
+        active = await isSubscriptionActive(env);
+      } catch (e) {
+        log("subscription_check_failed", { error: errName(e) });
+        return c.json({ error: "subscription check unavailable" }, 503);
+      }
+      if (!active) {
+        log("subscription_required_denied", { route: c.req.routePath });
+        return c.json({ error: "subscription_required" }, 402);
+      }
+    }
     const id = Id.safeParse(c.req.param("id"));
     if (!id.success) return c.json({ error: "invalid id" }, 400);
     const consult = await getConsult(env, id.data);

@@ -196,7 +196,7 @@ describe("PayPal webhook (E1-E4, E6, E14, D.1)", () => {
 
   it("unknown event types are acknowledged and ignored", async () => {
     const { app } = makeApp(paypalFakes());
-    const res = await post(app, { id: "WH-12", event_type: "BILLING.SUBSCRIPTION.ACTIVATED", resource: {} });
+    const res = await post(app, { id: "WH-12", event_type: "CUSTOMER.DISPUTE.CREATED", resource: {} }); // subscription events have their own suite now
     expect(await res.json()).toEqual({ status: "ignored" });
   });
 

@@ -74,7 +74,7 @@ export function currentCharge(db: D1Database, where: "id" | "paypal_order_id" | 
 }
 
 /** Keys under which PayPal nests a person (buyer or merchant): name, e-mail, phone, address. */
-const PII_KEYS = new Set(["payer", "payment_source", "payee", "shipping"]);
+const PII_KEYS = new Set(["payer", "payment_source", "payee", "shipping", "subscriber"]);
 
 /** Webhook payloads carry payer data at several depths; keep the evidence, drop the person (H9). */
 export function redactWebhook(value: unknown): unknown {

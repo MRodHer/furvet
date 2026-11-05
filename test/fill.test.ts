@@ -1,7 +1,7 @@
 import { env } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
 import type { Env } from "../src/env";
-import { count, DOCTOR_AUTH, json, makeApp, PP, seedConfirmed, withEnv } from "./helpers";
+import { count, DOCTOR_AUTH, json, makeApp, PP, seedConfirmed, seedSubscription, withEnv } from "./helpers";
 
 const toolUse = (name: string, input: unknown) => ({ stop_reason: "tool_use", content: [{ type: "tool_use", id: "tu-1", name, input }] });
 const g = (value: unknown, quote: string, segment_ids: number[]) => ({ value, segment_ids, quote });
@@ -9,6 +9,7 @@ const EMPTY = { subjective: {}, vitals: {}, physical_exam: {}, assessment: {}, p
 
 /** A transcribed consult seeded directly (the audio path has its own suite). */
 async function seedTranscribed() {
+  const subscription = await seedSubscription(); // the clinic pays for the AI (S14)
   const b = await seedConfirmed();
   const id = crypto.randomUUID();
   await env.DB.batch([
@@ -20,13 +21,24 @@ async function seedTranscribed() {
     env.DB.prepare("INSERT INTO transcript_segments (consult_id, idx, start_ms, end_ms, speaker, text) VALUES (?1, 4, 12000, 15000, 'doctor', 'LAURA, ¿desde cuándo no come Firulais? Te escribo a laura@example.com, Láura.')").bind(id),
   ]);
   const consultItem = await env.DB.prepare("SELECT id FROM catalog_items WHERE sku = 'CONSULTA-GENERAL'").first<{ id: string }>();
-  return { id, consultItemId: consultItem!.id, ...b };
+  return { id, consultItemId: consultItem!.id, subscription, ...b };
 }
 
 const fill = (app: ReturnType<typeof makeApp>["app"], id: string, e: Env = env, headers: Record<string, string> = DOCTOR_AUTH) =>
   app.request(`/api/v1/consults/${id}/fill`, { method: "POST", headers }, e);
 
 describe("AI draft with grounding (V7-B, V8-B, V18-B, E12)", () => {
+  it("S14b: a transcribed consult without an active clinic subscription → 402 and ZERO calls to the model", async () => {
+    const { id, subscription } = await seedTranscribed();
+    // The SAME row is cancelled (as a verified CANCELLED webhook would leave it); no other row is active.
+    await env.DB.prepare("INSERT INTO subscription_events (subscription_id, kind, state, raw) VALUES (?1, 'cancelled', 'cancelled', '{}')").bind(subscription.id).run();
+    const { app, count: calls } = makeApp({ [PP.claude]: () => json(toolUse("fill_consult", EMPTY)) });
+    const res = await fill(app, id);
+    expect(res.status).toBe(402);
+    expect(calls(PP.claude)).toBe(0);
+    expect(await count("consult_versions", "consult_id = ?1", id)).toBe(0);
+  });
+
   it("stores the validated draft, drops the ungrounded leaf, never sends prices or the owner's name to the model, sends nothing to the owner", async () => {
     const { id, consultItemId, conv } = await seedTranscribed();
     const script = toolUse("fill_consult", {
