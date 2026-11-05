@@ -36,6 +36,9 @@ describe("clinic subscription — rows and routes (S1–S6)", () => {
     await expect(env.DB.prepare("DELETE FROM subscriptions WHERE id = ?1").bind(id).run()).rejects.toThrow(/append-only/);
     await expect(env.DB.prepare("UPDATE subscription_events SET state = 'active' WHERE subscription_id = ?1").bind(id).run()).rejects.toThrow(/append-only/);
     await expect(env.DB.prepare("DELETE FROM subscription_events WHERE subscription_id = ?1").bind(id).run()).rejects.toThrow(/append-only/);
+    // DB barrier for the money rule: only a checked payment may carry state 'active'; a mismatch carries no state.
+    await expect(env.DB.prepare("INSERT INTO subscription_events (subscription_id, kind, state, raw) VALUES (?1, 'cancelled', 'active', '{}')").bind(id).run()).rejects.toThrow(/CHECK/);
+    await expect(env.DB.prepare("INSERT INTO subscription_events (subscription_id, kind, state, raw) VALUES (?1, 'amount_mismatch', 'active', '{}')").bind(id).run()).rejects.toThrow(/CHECK/);
   });
 
   it("S2: /start without PAYPAL_PLAN_ID, without PayPal secrets or without PUBLIC_BASE_URL → 503 before calling PayPal; no header → 401; empty doctor credential → 503", async () => {
@@ -93,6 +96,22 @@ describe("clinic subscription — rows and routes (S1–S6)", () => {
     expect(cnt(SUBS)).toBe(1);
     const latest = await env.DB.prepare("SELECT id FROM subscription_current ORDER BY seq DESC LIMIT 1").first<{ id: string }>();
     expect(latest!.id).not.toBe(old);
+  });
+
+  it("S4c: an older approval_pending paid AFTER /start issued a replacement → the paid row wins: GET active, /fill passes, /start 409 with no PayPal call (no third subscription)", async () => {
+    const { id: a, paypalId } = await seedSubscription("approval_pending");
+    const later = makeApp({ ...paypalFakes(), ...subsFake("https://www.sandbox.paypal.com/x?ba_token=B") }, new Date(Date.now() + 31 * 60_000));
+    expect((await start(later.app)).status).toBe(201); // row B supersedes the stale A
+    expect(later.count(SUBS)).toBe(1);
+    const { app, count: cnt } = makeApp({ ...paypalFakes(), ...subsFake("https://www.sandbox.paypal.com/x?ba_token=C") }, new Date());
+    expect(await (await post(app, WEBHOOK, activated("WH-S4c", paypalId))).json()).toEqual({ status: "activated" }); // the clinic approved A's link and pays
+    expect(await stateOf(a)).toBe("active");
+    expect((await status(app)).status).toBe("active");
+    expect((await fill(app)).status).toBe(404); // gate open: only the unknown consult fails
+    const rows = await count("subscriptions");
+    expect((await start(app)).status).toBe(409);
+    expect(cnt(SUBS)).toBe(0);
+    expect(await count("subscriptions")).toBe(rows);
   });
 
   it("S5: approve link not on https://www.sandbox.paypal.com (look-alike host, http, other host) → 502 and no row", async () => {
@@ -184,6 +203,9 @@ describe("clinic subscription — webhook (S7–S13, S17)", () => {
       expect(await stateOf(id)).toBe(terminal);
       expect(await events(id, "paypal_event_id IS NOT NULL")).toBe(0);
     }
+    const s = await seedSubscription("suspended");
+    expect(await (await post(app, WEBHOOK, activated("WH-S8c-resume", s.paypalId))).json()).toEqual({ status: "activated" }); // PayPal reactivates after a recovered payment
+    expect(await stateOf(s.id)).toBe("active");
     const { id, paypalId } = await seedSubscription("active");
     const ev = stateEvent("WH-S8c-cancel", "CANCELLED", paypalId);
     delete (ev.resource as { plan_id?: unknown }).plan_id;

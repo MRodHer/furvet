@@ -177,6 +177,8 @@ run_mutant "approve link checked by protocol only (look-alike host passes)" src/
   's/if (new URL(sub.approveUrl).origin !== APPROVE_ORIGIN) {/if (new URL(sub.approveUrl).protocol !== "https:") {/' test/subscription.test.ts || status=1
 run_mutant "webhook seen-check ignores subscription_events (replay re-processed)" src/routes/webhook.ts \
   's/ UNION ALL SELECT 1 FROM subscription_events WHERE paypal_event_id = ?1//' test/subscription.test.ts || status=1
+run_mutant "gate, GET and /start read only the latest row (a paid older subscription is ignored, /start creates another)" src/subscription.ts \
+  "s/ORDER BY (state = 'active') DESC, seq DESC LIMIT 1/ORDER BY seq DESC LIMIT 1/" test/subscription.test.ts || status=1
 run_mutant "a late ACTIVATED reopens a cancelled or expired subscription" src/subscription.ts \
   's/if (sub.state === "cancelled" || sub.state === "expired") {/if (false) {/' test/subscription.test.ts || status=1
 run_mutant "ACTIVATED stops checking the plan id" src/subscription.ts \

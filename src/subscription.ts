@@ -31,9 +31,12 @@ export function subscriptionRequired(env: Env): boolean {
   return env.SUBSCRIPTION_REQUIRED !== "false";
 }
 
-/** The latest subscription (single clinic). */
+/**
+ * The clinic's subscription: an ACTIVE row wins over any newer one (a stale approval can be paid
+ * after /start issued a replacement), otherwise the latest row. Gate, GET and /start all read this.
+ */
 export function currentSubscription(db: D1Database, where: "1 = 1" | "paypal_subscription_id = ?1" = "1 = 1", value?: string) {
-  const q = db.prepare(`SELECT ${COLUMNS} FROM subscription_current WHERE ${where} ORDER BY seq DESC LIMIT 1`);
+  const q = db.prepare(`SELECT ${COLUMNS} FROM subscription_current WHERE ${where} ORDER BY (state = 'active') DESC, seq DESC LIMIT 1`);
   return (value === undefined ? q : q.bind(value)).first<SubscriptionRow>();
 }
 

@@ -165,7 +165,7 @@ El orden de comprobación es fijo y se prueba: configuración → autenticación
 - Vitest con el pool de Workers: las pruebas corren **dentro** de workerd con D1 local real y las migraciones aplicadas. Nada se simula de la plataforma.
 - `npm test` = `scripts/checks.sh` **y luego** la suite. Los checks estáticos fallan antes de correr un solo test.
 - Un test por cláusula del contrato de aceptación; el nombre del test lleva el identificador de la cláusula.
-- Medido (feat/clinic-subscription, 2026-11-04): 21 archivos de prueba; 68 mutantes en `scripts/mutants.sh`.
+- Medido (feat/clinic-subscription, 2026-11-04): 21 archivos de prueba; 69 mutantes en `scripts/mutants.sh`.
 
 ### 7.2 Checks estáticos (`scripts/checks.sh`)
 
