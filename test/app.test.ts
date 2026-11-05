@@ -19,11 +19,28 @@ describe("app-level guards and board", () => {
     expect(await ok.json()).toMatchObject({ ok: true, paypal_env: "sandbox", paypal_configured: true, catalog_unpriced: false });
   });
 
-  it("security headers are present", async () => {
+  // Pentest M1/M2: a Hono route and a static asset carry the SAME security headers, CSP as a header included.
+  it("security headers, identical on a Hono response and on a static asset (M1), with a CSP header (M2)", async () => {
     const { app } = makeApp({});
-    const res = await app.request("/health", {}, env);
-    expect(res.headers.get("x-content-type-options")).toBe("nosniff");
-    expect(res.headers.get("x-frame-options")).toBe("SAMEORIGIN");
+    const EXPECTED = {
+      "x-frame-options": "DENY",
+      "strict-transport-security": "max-age=15552000; includeSubDomains",
+      "x-content-type-options": "nosniff",
+      "referrer-policy": "no-referrer",
+    };
+    for (const path of ["/health", "/sim.js", "/sim"]) {
+      const res = await app.request(path, {}, env);
+      expect(res.status, path).toBe(200);
+      for (const [h, v] of Object.entries(EXPECTED)) expect(res.headers.get(h), `${path} ${h}`).toBe(v);
+      const csp = res.headers.get("content-security-policy") ?? "";
+      expect(csp, path).toContain("default-src 'self'");
+      expect(csp, path).toContain("frame-ancestors 'none'");
+      expect(csp, path).toContain("script-src 'self' https://cdn.jsdelivr.net");
+    }
+    expect(await (await app.request("/sim.js", {}, env)).text()).toContain("furvet.session");
+    // Unknown paths stay 404; a write to an unknown path never reaches the asset worker.
+    expect((await app.request("/nope", {}, env)).status).toBe(404);
+    expect((await app.request("/api/v1/sim/chat", { method: "DELETE" }, env)).status).toBe(404);
   });
 
   it("board exposes amounts as strings and no raw payloads or payer data", async () => {

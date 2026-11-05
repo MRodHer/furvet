@@ -27,7 +27,26 @@ export function createApp(deps: Deps = DEFAULT_DEPS) {
   };
 
   const app = new Hono<{ Bindings: Env }>();
-  app.use("*", secureHeaders());
+  // One header set for EVERY response, Hono routes and static assets alike (see notFound below). The CSP
+  // header is the union of what the pages need; each page's <meta> CSP keeps its own tighter policy.
+  app.use(
+    "*",
+    secureHeaders({
+      xFrameOptions: "DENY",
+      contentSecurityPolicy: {
+        defaultSrc: ["'self'"],
+        scriptSrc: ["'self'", "https://cdn.jsdelivr.net"],
+        styleSrc: ["'self'", "'unsafe-inline'"],
+        imgSrc: ["'self'", "data:"],
+        mediaSrc: ["'self'", "blob:"],
+        connectSrc: ["'self'"],
+        objectSrc: ["'none'"],
+        formAction: ["'none'"],
+        baseUri: ["'none'"],
+        frameAncestors: ["'none'"],
+      },
+    }),
+  );
 
   // Fail-closed: anything other than the sandbox environment refuses every request.
   app.use("*", async (c, next) => {
@@ -59,15 +78,17 @@ export function createApp(deps: Deps = DEFAULT_DEPS) {
   app.route("/api/v1/consults", approveRoutes(deps, paypalFor));
   app.route("/", reportRoutes(deps));
 
-  // The doctor console and the ledger board are static pages served only behind the doctor's
-  // credential (wrangler.toml: run_worker_first routes them here instead of to the asset worker).
-  const page = (file: string) => async (c: { env: Env; req: { url: string } }) => {
-    const asset = await c.env.ASSETS.fetch(new Request(new URL(file, c.req.url)));
+  // Static assets are served through the Worker (wrangler.toml: run_worker_first = true) so secureHeaders
+  // applies to them; the doctor console and the ledger board only behind the doctor's credential.
+  const serveAsset = async (env: Env, req: Request) => {
+    const asset = await env.ASSETS.fetch(req);
     return new Response(asset.body, asset); // a mutable copy: the asset response's headers are read-only and secureHeaders sets its own
   };
+  const page = (file: string) => (c: { env: Env; req: { url: string } }) => serveAsset(c.env, new Request(new URL(file, c.req.url)));
   app.get("/console", doctorAuth(), page("/console.html"));
   app.get("/cobros", doctorAuth(), page("/cobros.html"));
   app.get("/cobros.html", doctorAuth(), page("/cobros.html"));
+  app.notFound((c) => (c.req.method === "GET" || c.req.method === "HEAD" ? serveAsset(c.env, c.req.raw) : c.text("404 Not Found", 404)));
 
   app.onError((err, c) => {
     // Middleware-raised responses (e.g. the 401 of basicAuth) are answers, not failures.
