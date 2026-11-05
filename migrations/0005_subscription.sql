@@ -3,7 +3,7 @@
 
 CREATE TABLE subscriptions (
   id TEXT PRIMARY KEY,
-  paypal_subscription_id TEXT NOT NULL UNIQUE,
+  paypal_subscription_id TEXT NOT NULL UNIQUE CHECK (length(paypal_subscription_id) <= 64),
   plan_id TEXT NOT NULL CHECK (length(plan_id) <= 40),
   amount_cents INTEGER NOT NULL CHECK (amount_cents > 0),
   currency TEXT NOT NULL CHECK (length(currency) = 3),
@@ -18,12 +18,15 @@ CREATE TABLE subscription_events (
   subscription_id TEXT NOT NULL REFERENCES subscriptions(id),
   kind TEXT NOT NULL CHECK (kind IN ('created', 'activated', 'payment', 'payment_failed', 'suspended', 'cancelled', 'expired', 'amount_mismatch')),
   state TEXT CHECK (state IS NULL OR state IN ('approval_pending', 'active', 'suspended', 'cancelled', 'expired')),
-  paypal_event_id TEXT UNIQUE,
+  paypal_event_id TEXT UNIQUE CHECK (paypal_event_id IS NULL OR length(paypal_event_id) <= 100),
   amount_cents INTEGER,
-  currency TEXT,
-  next_billing_at TEXT,
+  currency TEXT CHECK (currency IS NULL OR length(currency) = 3),
+  next_billing_at TEXT CHECK (next_billing_at IS NULL OR length(next_billing_at) <= 40),
   raw TEXT NOT NULL,
-  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+  -- Second barrier for the money rule: a mismatch never carries a state, and only a checked payment activates.
+  CHECK (kind <> 'amount_mismatch' OR state IS NULL),
+  CHECK (state IS NOT 'active' OR kind IN ('activated', 'payment'))
 );
 CREATE INDEX idx_subscription_events_subscription_id ON subscription_events (subscription_id, id);
 

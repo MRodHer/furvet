@@ -57,6 +57,7 @@ describe("clinic subscription — rows and routes (S1–S6)", () => {
     const before = await count("subscriptions");
     expect((await start(app, { plan_id: "P-EVIL" })).status).toBe(400);
     expect((await start(app, { amount: "1.00" })).status).toBe(400);
+    expect((await post(app, "/api/v1/subscription/start", "{\"plan_id\":", env, { "Content-Type": "application/json", ...DOCTOR_AUTH })).status).toBe(400); // malformed JSON is not an empty body
     expect(cnt(SUBS)).toBe(0);
     const res = await start(app);
     expect(res.status).toBe(201);
@@ -106,12 +107,20 @@ describe("clinic subscription — rows and routes (S1–S6)", () => {
 
   it("S6: GET /subscription → none / state of the latest row, server price, next billing when known, required switch; no-store", async () => {
     const { app } = makeApp({});
-    await env.DB.exec("DELETE FROM sqlite_sequence WHERE name = 'never'"); // no-op: tables are append-only, so 'none' is measured on a fresh row set below
-    const fresh = await app.request("/api/v1/subscription", { headers: DOCTOR_AUTH }, env);
+    // 'none': the rows are append-only, so an empty subscription_current is simulated by a DB whose read returns nothing.
+    const emptyDb = new Proxy(env.DB, {
+      get(target, prop, receiver) {
+        if (prop !== "prepare") return Reflect.get(target, prop, receiver);
+        return (sql: string) => {
+          const stmt = target.prepare(sql);
+          if (!sql.includes("subscription_current")) return stmt;
+          return new Proxy(stmt, { get: (s, p, r) => (p === "first" ? async () => null : p === "bind" ? (...a: unknown[]) => s.bind(...a) : Reflect.get(s, p, r)) });
+        };
+      },
+    });
+    const fresh = await app.request("/api/v1/subscription", { headers: DOCTOR_AUTH }, withEnv({ DB: emptyDb }));
     expect(fresh.headers.get("Cache-Control")).toBe("no-store");
-    const first = (await fresh.json()) as { status: string; price_cents: number; currency: string; required: boolean };
-    expect(first).toMatchObject({ price_cents: 99900, currency: "MXN", required: true });
-    expect(["none", "approval_pending", "active", "suspended", "cancelled", "expired"]).toContain(first.status);
+    expect(await fresh.json()).toEqual({ status: "none", next_billing_at: null, price_cents: 99900, currency: "MXN", required: true });
     const { id, paypalId } = await seedSubscription("approval_pending");
     expect((await status(app)).status).toBe("approval_pending");
     await env.DB.prepare("INSERT INTO subscription_events (subscription_id, kind, state, next_billing_at, raw) VALUES (?1, 'activated', 'active', '2026-12-04T10:00:00Z', '{}')").bind(id).run();
@@ -163,8 +172,23 @@ describe("clinic subscription — webhook (S7–S13, S17)", () => {
     expect(await (await post(app, WEBHOOK, noPay)).json()).toEqual({ status: "amount_mismatch" });
     const noPlan = activated("WH-S8e", paypalId);
     delete (noPlan.resource as { plan_id?: unknown }).plan_id;
-    expect(await (await post(app, WEBHOOK, noPlan)).json()).toEqual({ status: "invalid_resource" });
+    expect(await (await post(app, WEBHOOK, noPlan)).json()).toEqual({ status: "ignored" });
     expect(await stateOf(id)).toBe("approval_pending");
+  });
+
+  it("S8c: a late ACTIVATED over a cancelled or expired subscription is ignored (stale retry never reopens the gate); a CANCELLED without plan_id still applies", async () => {
+    const { app } = makeApp(paypalFakes());
+    for (const terminal of ["cancelled", "expired"] as const) {
+      const { id, paypalId } = await seedSubscription(terminal);
+      expect(await (await post(app, WEBHOOK, activated(`WH-S8c-${terminal}`, paypalId))).json()).toEqual({ status: "ignored" });
+      expect(await stateOf(id)).toBe(terminal);
+      expect(await events(id, "paypal_event_id IS NOT NULL")).toBe(0);
+    }
+    const { id, paypalId } = await seedSubscription("active");
+    const ev = stateEvent("WH-S8c-cancel", "CANCELLED", paypalId);
+    delete (ev.resource as { plan_id?: unknown }).plan_id;
+    expect(await (await post(app, WEBHOOK, ev)).json()).toEqual({ status: "cancelled" });
+    expect(await stateOf(id)).toBe("cancelled");
   });
 
   it("S9: ACTIVATED for an unknown subscription id → ignored, zero rows", async () => {

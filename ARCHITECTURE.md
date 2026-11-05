@@ -78,9 +78,10 @@ src/
   reports/  render.ts  pdf.ts  explain.ts         # PDF de texto plano; explicación validada
   routes/   webhook approve charges consults report sim
   prior/    hmac.ts  text.ts                      # ayudantes previos al proyecto (ver README)
-  images.ts  delivery.ts
-migrations/ 0001_… 0002_… 0003_…                   # forward-only, numeradas
-scripts/    checks.sh  mutants.sh
+  images.ts  delivery.ts  subscription.ts         # suscripción de la clínica (candado de la IA)
+  routes/subscription.ts
+migrations/ 0001_… 0002_… 0003_… 0004_… 0005_…     # forward-only, numeradas
+scripts/    checks.sh  mutants.sh  paypal-plan.sh  # paypal-plan.sh: GATED, crea producto+plan en sandbox
 test/       *.test.ts  helpers.ts  apply-migrations.ts
 ```
 
@@ -164,7 +165,7 @@ El orden de comprobación es fijo y se prueba: configuración → autenticación
 - Vitest con el pool de Workers: las pruebas corren **dentro** de workerd con D1 local real y las migraciones aplicadas. Nada se simula de la plataforma.
 - `npm test` = `scripts/checks.sh` **y luego** la suite. Los checks estáticos fallan antes de correr un solo test.
 - Un test por cláusula del contrato de aceptación; el nombre del test lleva el identificador de la cláusula.
-- Medido (feat/clinic-subscription, 2026-11-04): 21 archivos de prueba; 65 mutantes en `scripts/mutants.sh`.
+- Medido (feat/clinic-subscription, 2026-11-04): 21 archivos de prueba; 68 mutantes en `scripts/mutants.sh`.
 
 ### 7.2 Checks estáticos (`scripts/checks.sh`)
 

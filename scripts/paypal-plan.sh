@@ -8,7 +8,7 @@
 set -euo pipefail
 : "${PAYPAL_CLIENT_ID:?set PAYPAL_CLIENT_ID in the shell}" "${PAYPAL_CLIENT_SECRET:?set PAYPAL_CLIENT_SECRET in the shell}"
 BASE="https://api-m.sandbox.paypal.com"
-PRICE_VALUE="${PRICE_VALUE:-999.00}"; CURRENCY="${CURRENCY:-MXN}"
+PRICE_VALUE="999.00"; CURRENCY="MXN" # mirrors SUBSCRIPTION_PRICE_CENTS / wrangler.toml CURRENCY; change both or neither
 TOKEN=$(curl -sS -f -u "$PAYPAL_CLIENT_ID:$PAYPAL_CLIENT_SECRET" -d grant_type=client_credentials "$BASE/v1/oauth2/token" | python3 -c 'import json,sys; print(json.load(sys.stdin)["access_token"])')
 post() { # path request-id json → prints "HTTP <code>" to stderr and the body to stdout
   local out code

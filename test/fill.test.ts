@@ -28,6 +28,16 @@ const fill = (app: ReturnType<typeof makeApp>["app"], id: string, e: Env = env, 
   app.request(`/api/v1/consults/${id}/fill`, { method: "POST", headers }, e);
 
 describe("AI draft with grounding (V7-B, V8-B, V18-B, E12)", () => {
+  it("S14b: a transcribed consult without an active clinic subscription → 402 and ZERO calls to the model", async () => {
+    const { id } = await seedTranscribed();
+    await seedSubscription("cancelled"); // the latest subscription is closed
+    const { app, count: calls } = makeApp({ [PP.claude]: () => json(toolUse("fill_consult", EMPTY)) });
+    const res = await fill(app, id);
+    expect(res.status).toBe(402);
+    expect(calls(PP.claude)).toBe(0);
+    expect(await count("consult_versions", "consult_id = ?1", id)).toBe(0);
+  });
+
   it("stores the validated draft, drops the ungrounded leaf, never sends prices or the owner's name to the model, sends nothing to the owner", async () => {
     const { id, consultItemId, conv } = await seedTranscribed();
     const script = toolUse("fill_consult", {

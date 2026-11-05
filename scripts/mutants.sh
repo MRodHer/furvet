@@ -139,7 +139,7 @@ run_mutant "second capture re-settles (H7, code barrier)" src/routes/webhook.ts 
 run_mutant "capture naming a foreign order accepted (H8 cross-check removed)" src/routes/webhook.ts \
   's/if (!charge || (relatedOrder !== undefined \&\& relatedOrder !== charge.paypal_order_id)) {/if (!charge) {/' test/hardening.test.ts || status=1
 run_mutant "nested shipping kept in webhook evidence (H9)" src/ledger.ts \
-  's/const PII_KEYS = new Set(\["payer", "payment_source", "payee", "shipping"\]);/const PII_KEYS = new Set(["payer", "payment_source", "payee"]);/' test/hardening.test.ts || status=1
+  's/const PII_KEYS = new Set(\["payer", "payment_source", "payee", "shipping", "subscriber"\]);/const PII_KEYS = new Set(["payer", "payment_source", "payee", "subscriber"]);/' test/hardening.test.ts || status=1
 run_mutant "owner-sourced medication still billed (BB3 flag ignored)" src/routes/approve.ts \
   's/if (m.catalog_item_id \&\& !m.owner_sourced \&\& !billed.has(m.catalog_item_id))/if (m.catalog_item_id \&\& !billed.has(m.catalog_item_id))/' test/approve.test.ts || status=1
 run_mutant "quantity above 100 accepted (BB4)" src/billing.ts \
@@ -177,4 +177,10 @@ run_mutant "approve link checked by protocol only (look-alike host passes)" src/
   's/if (new URL(sub.approveUrl).origin !== APPROVE_ORIGIN) {/if (new URL(sub.approveUrl).protocol !== "https:") {/' test/subscription.test.ts || status=1
 run_mutant "webhook seen-check ignores subscription_events (replay re-processed)" src/routes/webhook.ts \
   's/ UNION ALL SELECT 1 FROM subscription_events WHERE paypal_event_id = ?1//' test/subscription.test.ts || status=1
+run_mutant "a late ACTIVATED reopens a cancelled or expired subscription" src/subscription.ts \
+  's/if (sub.state === "cancelled" || sub.state === "expired") {/if (false) {/' test/subscription.test.ts || status=1
+run_mutant "ACTIVATED stops checking the plan id" src/subscription.ts \
+  's/if (planId !== sub.plan_id) {/if (false) {/' test/subscription.test.ts || status=1
+run_mutant "a sale activates whatever its amount" src/subscription.ts \
+  's/state = amountOk \&\& sub.state === "approval_pending" ? "active" : null;/state = sub.state === "approval_pending" ? "active" : null;/' test/subscription.test.ts || status=1
 exit $status

@@ -60,9 +60,9 @@ export function eventInsert(db: D1Database, subscriptionId: string, kind: EventK
 const Money = z.object({ currency_code: z.string().length(3), value: z.string() });
 const SubscriptionResource = z.object({
   id: z.string().min(1),
-  plan_id: z.string().min(1), // always present on BILLING.SUBSCRIPTION.*; absent ⇒ invalid, never activates
+  plan_id: z.string().max(40).optional(), // required to ACTIVATE (checked below); a deactivation applies on the subscription id alone
   billing_info: z
-    .object({ last_payment: z.object({ amount: Money }).optional(), next_billing_time: z.string().optional() })
+    .object({ last_payment: z.object({ amount: Money }).optional(), next_billing_time: z.string().max(40).optional() })
     .optional(),
 });
 const SaleResource = z.object({
@@ -102,18 +102,31 @@ export async function handleSubscriptionEvent(env: Env, event: { id: string; eve
     } else {
       const r = SubscriptionResource.parse(event.resource);
       subId = r.id;
-      planId = r.plan_id;
+      planId = r.plan_id ?? null;
       nextBillingAt = r.billing_info?.next_billing_time ?? null;
       const lp = r.billing_info?.last_payment?.amount;
       if (lp) paid = { amountCents: valueToCents(lp.value), currency: lp.currency_code };
     }
   } catch {
+    log("subscription_webhook_unknown", { event_id: event.id, reason: "invalid_resource" });
     return "invalid_resource";
   }
   const sub = await currentSubscription(env.DB, "paypal_subscription_id = ?1", subId);
-  if (!sub || (planId !== null && planId !== sub.plan_id)) {
-    log("subscription_webhook_unknown", { event_id: event.id, reason: sub ? "plan_mismatch" : "unknown_subscription" });
+  if (!sub) {
+    log("subscription_webhook_unknown", { event_id: event.id, reason: "unknown_subscription" });
     return "ignored";
+  }
+  if (stateEvent?.kind === "activated") {
+    // Activation is the guarded direction: our plan, and never over a terminal state (a stale retry
+    // of ACTIVATED after CANCELLED/EXPIRED would otherwise reopen the AI gate for free).
+    if (planId !== sub.plan_id) {
+      log("subscription_webhook_unknown", { event_id: event.id, reason: "plan_mismatch" });
+      return "ignored";
+    }
+    if (sub.state === "cancelled" || sub.state === "expired") {
+      log("subscription_webhook_unknown", { event_id: event.id, reason: "stale_activation" });
+      return "ignored";
+    }
   }
 
   let kind: EventKind;
