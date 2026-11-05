@@ -152,4 +152,25 @@ run_mutant "rx link back in the owner's chat (ADENDA 2)" src/routes/approve.ts \
   's|"La receta te la entrega la doctora impresa y firmada.",|"La receta te la entrega la doctora impresa y firmada.", `Receta en PDF: ${base}/rx/${ticket.token}`,|' test/approve.test.ts || status=1
 run_mutant "rx section back in the owner's report (ADENDA 2)" src/reports/render.ts \
   's|  // No rx section here: the prescription is printed and signed by the doctor, never delivered to the owner (ADENDA 2).|  out.push({ kind: "h2", text: "Receta" }, ...prescriptionLines(body).map((text) => ({ kind: "p" as const, text })));|' test/report.test.ts || status=1
+# ---- clinic subscription (Constructora C, feat-clinic-subscription) ----
+run_mutant "subscription money gate ignores the amount (998.00 activates)" src/subscription.ts \
+  's/const amountOk = paid !== null \&\& paid.amountCents === sub.amount_cents \&\& paid.currency === sub.currency;/const amountOk = paid !== null \&\& paid.currency === sub.currency;/' test/subscription.test.ts || status=1
+run_mutant "subscription money gate ignores the currency (999.00 USD activates)" src/subscription.ts \
+  's/const amountOk = paid !== null \&\& paid.amountCents === sub.amount_cents \&\& paid.currency === sub.currency;/const amountOk = paid !== null \&\& paid.amountCents === sub.amount_cents;/' test/subscription.test.ts || status=1
+run_mutant "subscription webhook stops matching OUR paypal_subscription_id (any row)" src/subscription.ts \
+  's/const sub = await currentSubscription(env.DB, "paypal_subscription_id = ?1", subId);/const sub = await currentSubscription(env.DB);/' test/subscription.test.ts || status=1
+run_mutant "a sale resurrects a cancelled subscription" src/subscription.ts \
+  's/state = amountOk \&\& sub.state === "approval_pending" ? "active" : null;/state = amountOk \&\& sub.state !== "active" ? "active" : null;/' test/subscription.test.ts || status=1
+run_mutant "SUBSCRIPTION_REQUIRED default flips to OFF" src/subscription.ts \
+  's/return env.SUBSCRIPTION_REQUIRED !== "false";/return env.SUBSCRIPTION_REQUIRED === "true";/' test/subscription.test.ts || status=1
+run_mutant "AI gate removed from /fill" src/routes/consults.ts \
+  's/if (subscriptionRequired(env)) {/if (false) {/' test/subscription.test.ts || status=1
+run_mutant "AI gate passes when the subscription store fails" src/routes/consults.ts \
+  's/return c.json({ error: "subscription check unavailable" }, 503);/active = true;/' test/subscription.test.ts || status=1
+run_mutant "/start body accepts extra keys (plan_id from the client)" src/routes/subscription.ts \
+  's/const StartBody = z.object({}).strict();/const StartBody = z.object({});/' test/subscription.test.ts || status=1
+run_mutant "approve link checked by protocol only (look-alike host passes)" src/routes/subscription.ts \
+  's/if (new URL(sub.approveUrl).origin !== APPROVE_ORIGIN) {/if (new URL(sub.approveUrl).protocol !== "https:") {/' test/subscription.test.ts || status=1
+run_mutant "webhook seen-check ignores subscription_events (replay re-processed)" src/routes/webhook.ts \
+  's/ UNION ALL SELECT 1 FROM subscription_events WHERE paypal_event_id = ?1//' test/subscription.test.ts || status=1
 exit $status

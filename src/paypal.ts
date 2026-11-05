@@ -4,6 +4,7 @@
 //   POST /v2/checkout/orders            (header PayPal-Request-Id = idempotency key)
 //   POST /v2/checkout/orders/{id}/capture
 //   POST /v1/notifications/verify-webhook-signature
+//   POST /v1/billing/subscriptions      (Subscriptions v1; same {id, status, links} shape)
 import { z } from "zod";
 import { centsToValue, valueToCents } from "./money";
 import { errName, log } from "./log";
@@ -63,7 +64,16 @@ export interface CreateOrderInput {
   discountCents?: number;
 }
 
+export interface CreateSubscriptionInput {
+  planId: string;
+  customId: string;
+  requestId: string;
+  returnUrl: string;
+  cancelUrl: string;
+}
+
 export interface PayPalClient {
+  createSubscription(input: CreateSubscriptionInput): Promise<{ subscriptionId: string; approveUrl: string; raw: unknown }>;
   createOrder(input: CreateOrderInput): Promise<{ orderId: string; approveUrl: string; raw: unknown }>;
   captureOrder(orderId: string): Promise<{
     captureId: string;
@@ -161,6 +171,22 @@ export function makePayPal(
       const approve = order.links.find((l) => l.rel === "approve" || l.rel === "payer-action");
       if (!approve) throw new PayPalError("order has no approve link");
       return { orderId: order.id, approveUrl: approve.href, raw };
+    },
+
+    async createSubscription(input) {
+      const raw = await call(
+        "/v1/billing/subscriptions",
+        {
+          plan_id: input.planId,
+          custom_id: input.customId,
+          application_context: { return_url: input.returnUrl, cancel_url: input.cancelUrl, user_action: "SUBSCRIBE_NOW", shipping_preference: "NO_SHIPPING" },
+        },
+        input.requestId,
+      );
+      const sub = OrderSchema.parse(raw);
+      const approve = sub.links.find((l) => l.rel === "approve");
+      if (!approve) throw new PayPalError("subscription has no approve link");
+      return { subscriptionId: sub.id, approveUrl: approve.href, raw };
     },
 
     async captureOrder(orderId) {
