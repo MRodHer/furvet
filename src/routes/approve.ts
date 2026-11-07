@@ -21,7 +21,7 @@ import type { PayPalClient } from "../paypal";
 import { MAX_EXPLANATION_CHARS, plainExplanation } from "../reports/explain";
 import { buildPdf } from "../reports/pdf";
 import { PRIVATE } from "./report";
-import { billTextLines, leafSource, leafValue, reportBlocks, rxBlocks, ticketBlocks, urgentLines, type ReportHeader, type RxDetails } from "../reports/render";
+import { billTextLines, leafSource, leafValue, reportBlocks, RX_PAGE, rxBlocks, ticketBlocks, urgentLines, type ReportHeader, type RxDetails } from "../reports/render";
 
 const CONSULT_SKU = "CONSULTA-GENERAL";
 // The approved snapshot, in BillLine shape: the only price source after approval (never catalog_items again).
@@ -213,7 +213,7 @@ export function approveRoutes(deps: Deps, paypalFor: (env: Env) => PayPalClient 
     const owner = await env.DB.prepare("SELECT k.name FROM appointments a JOIN contacts k ON k.id = a.contact_id WHERE a.id = ?1").bind(consult.appointment_id).first<{ name: string }>();
     const rxDetails: RxDetails = { ownerName: owner?.name ?? "", breed: consult.breed, sex: consult.sex, birthDate: consult.birth_date, clinicAddress: env.CLINIC_ADDRESS, clinicPhone: env.CLINIC_PHONE, clinicEmail: env.CLINIC_EMAIL };
     // Both PDFs land in R2 BEFORE the D1 batch: a failed put means no approval at all, never a half one.
-    await env.FILES.put(`reports/${approvalId}/rx.pdf`, buildPdf(rxBlocks(body, header, rxDetails)), { httpMetadata: { contentType: "application/pdf" } });
+    await env.FILES.put(`reports/${approvalId}/rx.pdf`, buildPdf(rxBlocks(body, header, rxDetails), RX_PAGE), { httpMetadata: { contentType: "application/pdf" } });
     await env.FILES.put(`reports/${approvalId}/ticket.pdf`, buildPdf(ticketBlocks(header, bill, env.CURRENCY)), { httpMetadata: { contentType: "application/pdf" } });
 
     // The owner's message: urgent instructions, the fixed rx notice (the rx itself is printed and signed by

@@ -89,35 +89,66 @@ export function ageLabel(birthDate: string | null, at: string): string | null {
   return `${n} ${n === 1 ? unit[0] : unit[1]}`;
 }
 
-/** Printable A4 rx (common vet layout): clinic letterhead, owner and patient (blank line when unknown), one
- *  medication per block, review date and signature lines to fill by hand. Never gated. */
+/** Half-letter page for the rx (5.5 × 8.5 in = 396 × 612 pt): a real Mexican vet prescription size,
+ *  printable on half a sheet or on letter cut in two. 36 pt (1.27 cm) margins print on any printer. */
+export const RX_PAGE = { w: 396, h: 612, margin: 36 };
+
+/** Printable half-letter rx (common Mexican vet layout): clinic + doctor letterhead, a patient/owner band,
+ *  Rp/ with one numbered medication per block (name in bold, dose · frequency · duration legible below),
+ *  observations, review date, signature and seal, legal footer. Three font sizes only. Never gated. */
 export function rxBlocks(body: ApprovedConsult, h: ReportHeader, d: RxDetails): Block[] {
+  const T = 14; // letterhead
+  const B = 10.5; // body: patient data, medication name/dose, observations, signature — every number ≥ 10 pt
+  const F = 8; // legal fine print
   const field = (label: string, value: string | null | undefined) => `${label}: ${value || BLANK}`;
+  // 'Visitante' is the contacts.name DB default (migration 0001): the owner never gave a name → em dash, not the placeholder.
+  const tutor = d.ownerName && d.ownerName !== "Visitante" ? d.ownerName : "—";
   const peso = v(body.vitals.peso);
   const out: Block[] = [
-    ...header(h, "Receta"),
-    { kind: "small", text: [d.clinicAddress, d.clinicPhone, d.clinicEmail].filter(Boolean).join(" · ") },
-    { kind: "p", text: field("Tutor", d.ownerName) },
-    { kind: "p", text: `${field("Raza", d.breed)}   ${field("Edad", ageLabel(d.birthDate, h.approvedAt))}` },
-    { kind: "p", text: `${field("Peso", peso ? `${peso} kg` : null)}   ${field("Sexo", d.sex)}` },
-    { kind: "h2", text: "Medicamentos" },
+    { kind: "styled", text: h.clinicName, size: T, bold: true },
+    { kind: "styled", text: `${h.doctorName} · ${h.licenseLabel}`, size: B },
   ];
-  if (!body.prescription.length) out.push({ kind: "p", text: "Sin medicamentos." });
+  // Address on its own line, phone + email on the next: a narrow page must never split a phone number across lines.
+  if (d.clinicAddress) out.push({ kind: "styled", text: d.clinicAddress, size: B });
+  const contact = [d.clinicPhone, d.clinicEmail].filter(Boolean).join(" · ");
+  if (contact) out.push({ kind: "styled", text: contact, size: B });
+  out.push({ kind: "styled", text: `Folio ${h.folio} · ${h.approvedAt.slice(0, 10)}`, size: B });
+  out.push({ kind: "rule" });
+  out.push(
+    { kind: "styled", text: `Paciente: ${h.petName} (${h.species})`, size: B, bold: true },
+    { kind: "styled", text: `Tutor: ${tutor}`, size: B },
+    { kind: "cols", left: field("Raza", d.breed), right: field("Edad", ageLabel(d.birthDate, h.approvedAt)), size: B },
+    { kind: "cols", left: field("Peso", peso ? `${peso} kg` : null), right: field("Sexo", d.sex), size: B },
+  );
+  out.push({ kind: "rule" });
+  out.push({ kind: "styled", text: "Rp/", size: B, bold: true, gap: 2 });
+  if (!body.prescription.length) out.push({ kind: "styled", text: "Sin medicamentos.", size: B });
   body.prescription.forEach((m, i) => {
     const name = [v(m.medicamento), v(m.concentracion), v(m.forma_farmaceutica)].filter(Boolean).join(" ");
     const how = [v(m.dosis), v(m.frecuencia), v(m.duracion), v(m.via_administracion) ? `vía ${v(m.via_administracion)}` : null].filter(Boolean).join(" · ");
-    out.push({ kind: "p", text: `${i + 1}. ${name}` });
-    if (how) out.push({ kind: "small", text: `   ${how}` });
-    if (v(m.indicaciones)) out.push({ kind: "small", text: `   Indicaciones: ${v(m.indicaciones)}` });
+    out.push({ kind: "styled", text: `${i + 1}. ${name}`, size: B, bold: true, gap: 3 });
+    if (how) out.push({ kind: "styled", text: `    ${how}`, size: B });
+    if (v(m.indicaciones)) out.push({ kind: "styled", text: `    Indicaciones: ${v(m.indicaciones)}`, size: B });
   });
   const urgent = urgentLines(body);
-  if (urgent.length) out.push({ kind: "h2", text: "Indicaciones urgentes" }, ...urgent.map((text) => ({ kind: "p" as const, text: `• ${text}` })));
+  if (urgent.length) {
+    out.push({ kind: "styled", text: "Indicaciones urgentes", size: B, bold: true, gap: 4 });
+    urgent.forEach((text) => out.push({ kind: "styled", text: `• ${text}`, size: B }));
+  }
   const plan = v(body.plan.instrucciones_cliente);
-  if (plan) out.push({ kind: "h2", text: "Observaciones" }, { kind: "p", text: plan });
-  // Blank line to sign by hand. Nothing is ever embedded here.
-  out.push({ kind: "p", text: " " }, { kind: "p", text: "Fecha de revisión: ____ / ____ / ________" }, { kind: "p", text: " " }, { kind: "p", text: `Firma: ______________________________   ${h.doctorName}` });
-  out.push({ kind: "small", text: "Original para el médico: imprimir, firmar y entregar." });
-  return [...out, ...footer(h)];
+  if (plan) out.push({ kind: "styled", text: "Observaciones", size: B, bold: true, gap: 4 }, { kind: "styled", text: plan, size: B });
+  out.push({ kind: "rule" });
+  // Signature and seal to fill by hand. Nothing is ever embedded here. Firma and Sello sit on their own
+  // lines with open space below each (wrapText collapses runs of spaces, so a single line leaves no room to stamp).
+  out.push(
+    { kind: "styled", text: "Fecha de revisión: ____ / ____ / ________", size: B, gap: 2 },
+    { kind: "styled", text: "Firma: ______________________________", size: B, gap: 14 },
+    { kind: "styled", text: "Sello:", size: B, gap: 20 },
+    { kind: "styled", text: `${h.doctorName} · ${h.licenseLabel}`, size: B, gap: 26 },
+  );
+  out.push({ kind: "styled", text: "Original para el médico: imprimir, firmar y entregar.", size: F, gap: 4 });
+  out.push({ kind: "styled", text: `Contenido clínico revisado y aprobado por el médico el ${h.approvedAt.slice(0, 10)}, con asistencia de IA. No sustituye la atención presencial.`, size: F, gap: 2 });
+  return out;
 }
 
 /** The bill, one line per snapshot concept. The ONLY text source for the ticket and the chat messages. */

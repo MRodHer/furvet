@@ -185,4 +185,7 @@ run_mutant "ACTIVATED stops checking the plan id" src/subscription.ts \
   's/if (planId !== sub.plan_id) {/if (false) {/' test/subscription.test.ts || status=1
 run_mutant "a sale activates whatever its amount" src/subscription.ts \
   's/state = amountOk \&\& sub.state === "approval_pending" ? "active" : null;/state = sub.state === "approval_pending" ? "active" : null;/' test/subscription.test.ts || status=1
+# ---- rx legible (item 3): the owner's DB-default name must never reach the printed rx ----
+run_mutant "rx prints the «Visitante» DB default instead of an em dash (item 3)" src/reports/render.ts \
+  's/d.ownerName \&\& d.ownerName !== "Visitante"/d.ownerName \&\& d.ownerName !== ""/' test/report.test.ts || status=1
 exit $status
