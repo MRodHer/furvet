@@ -118,7 +118,7 @@
     $("work").classList.toggle("hidden", !hasTranscript);
     if (hasTranscript) { renderTranscript(data.segments); renderDraft(data.draft); }
     $("approveBtn").disabled = !data.draft || consult.status !== "drafted";
-    if (data.approved_version_id) $("approveState").textContent = "Ya aprobada.";
+    if (data.approved_version_id) { $("approveState").textContent = "Ya aprobada."; $("fillBtn").disabled = true; } // the server answers 409 anyway
     await renderDelivery();
   }
 
@@ -183,15 +183,16 @@
       const blob = new Blob(chunks, { type: mimeType.split(";")[0] || "audio/webm" });
       chunks.length = 0;
       setStatus("Transcribiendo (puede tardar un minuto)…");
-      const res = await fetch(`/api/v1/consults/${consultId}/audio`, { method: "POST", headers: { "Content-Type": blob.type }, body: blob });
+      const id = consultId; // the consult this recording belongs to, whatever is open when it finishes
+      const res = await fetch(`/api/v1/consults/${id}/audio`, { method: "POST", headers: { "Content-Type": blob.type }, body: blob });
       let data = {};
       try { data = await res.json(); } catch (e) { data = { error: e.name }; }
       if (!res.ok) { setStatus(`No se pudo transcribir (${res.status}): ${data.error || ""}. Intenta de nuevo.`, "err"); $("recLabel").textContent = "Sin grabar"; $("recBtn").disabled = false; return; }
       setStatus(`Transcrito: ${data.segments} segmentos, ${data.seconds} s${data.labeled ? "" : " (hablantes sin etiquetar)"}.`, "ok");
       $("recLabel").textContent = "Listo";
-      await refresh();
-      // Auto-draft: once per finished transcription, only when the clinic may use the AI (else the notice stays).
-      if (consult.status === "transcribed" && aiAllowed()) await requestDraft();
+      // Auto-draft: once per finished transcription, only when the clinic may use the AI (else the notice
+      // stays). The form is not shown before the draft answers, so nothing typed can be overwritten.
+      if (aiAllowed()) await requestDraft(id); else await refresh();
     });
     recorder.start();
     const startedAt = Date.now();
@@ -337,17 +338,24 @@
     $("fillBtn").textContent = draft ? "Regenerar borrador con IA" : "Generar borrador con IA";
     if (!aiAllowed()) { $("fillBtn").disabled = true; $("fillState").textContent = "La IA está desactivada: la clínica no tiene suscripción activa (ver tarjeta 0)."; }
   }
-  // One request per click or per finished transcription: no retry, no loop. The server's subscription
-  // gate (402) is the authority; the console only avoids a call it knows will be refused.
-  async function requestDraft() {
+  // One request per click or per finished transcription: no retry, no loop, never two in flight
+  // (`drafting`). The server's subscription gate (402) is the authority; the console only avoids a
+  // call it knows will be refused. `id` is pinned by the caller: a consult switched during the minute
+  // of transcription is never drafted by mistake, and the screen is only refreshed if it still shows it.
+  let drafting = false;
+  async function requestDraft(id) {
+    if (drafting) return;
+    drafting = true;
     $("fillBtn").disabled = true; $("fillState").textContent = "Pidiendo el borrador a la IA…";
-    const { ok, status, data } = await api(`/${consultId}/fill`, { method: "POST" });
+    const { ok, status, data } = await api(`/${id}/fill`, { method: "POST" });
+    drafting = false;
+    if (status === 402) await loadSubscription();
+    if (id !== consultId) return;
     $("fillBtn").disabled = false;
-    if (status === 402) { await loadSubscription(); $("fillBtn").disabled = true; $("fillState").textContent = "La IA está desactivada: la clínica no tiene suscripción activa (ver tarjeta 0)."; return; }
-    if (!ok) { $("fillState").textContent = `No se pudo generar (${data.error || ""}). Pulsa «Regenerar» para intentar de nuevo.`; return; }
-    await refresh();
+    await refresh(); // renderDraft repaints the form from the server (nothing was editable while waiting) and the 402 notice
+    if (!ok && status !== 402) $("fillState").textContent = `No se pudo generar (${data.error || ""}). Puedes pedirlo de nuevo con el botón.`;
   }
-  $("fillBtn").addEventListener("click", requestDraft);
+  $("fillBtn").addEventListener("click", () => requestDraft(consultId));
 
   // Approval body: every leaf tagged with its source (ai keeps the evidence; doctor is a plain entry).
   // The route /approve is served by the billing step; the server re-validates everything.
