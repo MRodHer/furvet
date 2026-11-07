@@ -1,6 +1,7 @@
 import { env } from "cloudflare:test";
 import { afterEach, describe, expect, it } from "vitest";
 import type { Env } from "../src/env";
+import { claimCharge } from "../src/ledger";
 import { assertNoPii, captureLogs, count, json, makeApp, paypalFakes, PP, seedBooking, withEnv } from "./helpers";
 
 type Handler = Parameters<typeof makeApp>[0][string];
@@ -157,6 +158,20 @@ describe("chat simulator + agent (E11, E13, E14, agent guards)", () => {
     expect(await count("appointments", "conversation_id = ?1 AND status = 'pending_deposit'", session)).toBe(1);
     expect(await count("charges", "kind = 'deposit' AND conversation_id = ?1", session)).toBe(1);
     assertNoPii(logs.lines);
+  });
+
+  it("payment_pending: false with no charge, true while the deposit is unpaid, false once captured (the chat polls only then)", async () => {
+    const { app } = makeApp({});
+    const { conv, appt } = await seedBooking();
+    const pending = async () => (await (await app.request(`/api/v1/sim/${conv}/messages`, {}, env)).json<{ payment_pending: boolean }>()).payment_pending;
+    expect(await pending()).toBe(false);
+    const chargeId = crypto.randomUUID();
+    await claimCharge(env.DB, { id: chargeId, kind: "deposit", appointmentId: appt, conversationId: conv, paypalOrderId: `O-${chargeId}`, paypalRequestId: `deposit-${appt}`, amountCents: 20000, currency: "MXN", approveUrl: "https://www.sandbox.paypal.com/x" }, {});
+    expect(await pending()).toBe(true);
+    await env.DB.prepare("INSERT INTO charge_events (charge_id, status, paypal_capture_id, amount_cents, currency, raw) VALUES (?1, 'captured', ?2, 20000, 'MXN', '{}')").bind(chargeId, `CAP-${chargeId}`).run();
+    expect(await pending()).toBe(false);
+    // Another session never sees this conversation's charge.
+    expect((await (await app.request(`/api/v1/sim/${crypto.randomUUID()}/messages`, {}, env)).json<{ payment_pending: boolean }>()).payment_pending).toBe(false);
   });
 
   it("consent is recorded once by the button, never by the model", async () => {
