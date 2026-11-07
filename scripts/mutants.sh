@@ -3,7 +3,7 @@
 # Usage: bash scripts/mutants.sh   (requires a clean git tree for src/)
 set -uo pipefail
 cd "$(dirname "$0")/.."
-if [ -n "$(git status --porcelain src)" ]; then echo "src/ has uncommitted changes; commit or stash first"; exit 2; fi
+if [ -n "$(git status --porcelain src public)" ]; then echo "src/ or public/ has uncommitted changes; commit or stash first"; exit 2; fi
 
 # pass | fail | broken — "broken" is a suite that did not run (pool start failure, no test
 # files, missing summary) and must never be read as a dead mutant.
@@ -188,4 +188,13 @@ run_mutant "a sale activates whatever its amount" src/subscription.ts \
 # ---- rx legible (item 3): the owner's DB-default name must never reach the printed rx ----
 run_mutant "rx prints the «Visitante» DB default instead of an em dash (item 3)" src/reports/render.ts \
   's/d.ownerName \&\& d.ownerName !== "Visitante"/d.ownerName \&\& d.ownerName !== ""/' test/report.test.ts || status=1
+# ---- automatic draft (Constructora C, fix-movil ítem 1) ----
+run_mutant "auto-draft fires without the subscription check (console calls /fill it knows is refused)" public/console.js \
+  's/if (aiAllowed()) await requestDraft(id); else await refresh();/await requestDraft(id);/' test/console_auth.test.ts || status=1
+run_mutant "console treats the clinic as subscribed by default (gate half-open on the client)" public/console.js \
+  's/const aiAllowed = () => !subscription.required || subscription.status === "active";/const aiAllowed = () => true;/' test/console_auth.test.ts || status=1
+run_mutant "auto-draft retries after an error (second call site: saldo spent in a loop)" public/console.js \
+  's/if (!ok \&\& status !== 402) \$("fillState").textContent = `No se pudo generar/if (!ok \&\& status !== 402) requestDraft(id); if (false) $("fillState").textContent = `No se pudo generar/' test/console_auth.test.ts || status=1
+run_mutant "two drafts may run at once (click during the automatic one)" public/console.js \
+  's/if (drafting) return;/if (false) return;/' test/console_auth.test.ts || status=1
 exit $status

@@ -32,10 +32,10 @@ describe("app-level guards and board", () => {
       const res = await app.request(path, {}, env);
       expect(res.status, path).toBe(200);
       for (const [h, v] of Object.entries(EXPECTED)) expect(res.headers.get(h), `${path} ${h}`).toBe(v);
-      const csp = res.headers.get("content-security-policy") ?? "";
-      expect(csp, path).toContain("default-src 'self'");
-      expect(csp, path).toContain("frame-ancestors 'none'");
-      expect(csp, path).toContain("script-src 'self' https://cdn.jsdelivr.net");
+      // The whole policy, as a string: dropping any directive is a defect (ratchet from the headers verdict).
+      expect(res.headers.get("content-security-policy"), path).toBe(
+        "default-src 'self'; script-src 'self' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; media-src 'self' blob:; connect-src 'self'; object-src 'none'; form-action 'none'; base-uri 'none'; frame-ancestors 'none'",
+      );
     }
     expect(await (await app.request("/sim.js", {}, env)).text()).toContain("furvet.session");
     // Unknown paths stay 404; a write to an unknown path never reaches the asset worker.

@@ -19,5 +19,5 @@ post() { # path request-id json → prints "HTTP <code>" to stderr and the body 
 }
 PRODUCT_ID=$(post /v1/catalogs/products furvet-product-1 '{"name":"FurVet — suscripción de clínica","type":"SERVICE","category":"SOFTWARE"}' | python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])')
 PLAN=$(post /v1/billing/plans furvet-plan-mxn-999-1 "{\"product_id\":\"$PRODUCT_ID\",\"name\":\"FurVet mensual\",\"status\":\"ACTIVE\",\"billing_cycles\":[{\"tenure_type\":\"REGULAR\",\"sequence\":1,\"total_cycles\":0,\"frequency\":{\"interval_unit\":\"MONTH\",\"interval_count\":1},\"pricing_scheme\":{\"fixed_price\":{\"currency_code\":\"$CURRENCY\",\"value\":\"$PRICE_VALUE\"}}}],\"payment_preferences\":{\"auto_bill_outstanding\":true,\"payment_failure_threshold\":1}}")
-python3 -c 'import json,sys; p=json.load(sys.stdin); print(f"PAYPAL_PLAN_ID={p[\"id\"]}  status={p[\"status\"]}")' <<<"$PLAN"
+python3 -c "import json,sys; p=json.load(sys.stdin); print('PAYPAL_PLAN_ID=' + p['id'] + '  status=' + p['status'])" <<<"$PLAN"
 echo "Next: npx wrangler deploy --var PAYPAL_PLAN_ID:<P-…> --var SUBSCRIPTION_REQUIRED:true ; register the 6 subscription events on the webhook (README)." >&2
