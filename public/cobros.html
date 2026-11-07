@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline'; connect-src 'self'; form-action 'none'; base-uri 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src 'self'; form-action 'none'; base-uri 'none'">
 <title>FurVet — cobros (ledger)</title>
 <style>
   body { margin:0; font-family: system-ui, sans-serif; color:#111827; background:#f9fafb; }
@@ -11,7 +11,8 @@
   h1 { font-size: 1.1rem; margin: 0 0 4px; }
   .note { color:#6b7280; font-size:.85rem; margin-bottom: 12px; }
   #grid { height: 70vh; }
-  #events { margin-top: 12px; font-size: .9rem; }
+  #events { margin-top: 12px; font-size: .9rem; overflow-x: auto; }
+  #events h2 { word-break: break-all; }
   #events table { border-collapse: collapse; width: 100%; }
   #events th, #events td { text-align:left; padding: 6px 8px; border-bottom: 1px solid #e5e7eb; }
 </style>

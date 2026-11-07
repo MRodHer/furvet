@@ -38,6 +38,7 @@ export function createApp(deps: Deps = DEFAULT_DEPS) {
         scriptSrc: ["'self'", "https://cdn.jsdelivr.net"],
         styleSrc: ["'self'", "'unsafe-inline'"],
         imgSrc: ["'self'", "data:"],
+        fontSrc: ["'self'", "data:"], // AG Grid's Quartz theme ships its icon font and icons as data: URIs
         mediaSrc: ["'self'", "blob:"],
         connectSrc: ["'self'"],
         objectSrc: ["'none'"],
