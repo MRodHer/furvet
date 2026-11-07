@@ -185,4 +185,9 @@ run_mutant "ACTIVATED stops checking the plan id" src/subscription.ts \
   's/if (planId !== sub.plan_id) {/if (false) {/' test/subscription.test.ts || status=1
 run_mutant "a sale activates whatever its amount" src/subscription.ts \
   's/state = amountOk \&\& sub.state === "approval_pending" ? "active" : null;/state = sub.state === "approval_pending" ? "active" : null;/' test/subscription.test.ts || status=1
+# ---- automatic draft (Constructora C, fix-movil ítem 1) ----
+run_mutant "auto-draft fires without the subscription check (console calls /fill it knows is refused)" public/console.js \
+  's/if (consult.status === "transcribed" \&\& aiAllowed()) await requestDraft();/if (consult.status === "transcribed") await requestDraft();/' test/console_auth.test.ts || status=1
+run_mutant "auto-draft no longer requires a fresh transcription (a second draft per recording)" public/console.js \
+  's/if (consult.status === "transcribed" \&\& aiAllowed()) await requestDraft();/if (aiAllowed()) await requestDraft();/' test/console_auth.test.ts || status=1
 exit $status

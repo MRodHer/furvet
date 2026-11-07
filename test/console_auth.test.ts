@@ -39,3 +39,13 @@ describe("doctor console auth (V16, D.7)", () => {
     expect(html).not.toMatch(/<script[^>]*src=["']https?:/);
   });
 });
+
+describe("console: automatic AI draft after transcription (encargo fix-movil ítem 1)", () => {
+  it("AD1: console.js fires the draft once after a finished transcription, only through the shared requestDraft and only when the clinic may use the AI (pin on the served script; behaviour not measured in a browser)", async () => {
+    const js = await (await env.ASSETS.fetch(new Request("https://furvet.test/console.js"))).text();
+    expect(js).toContain('if (consult.status === "transcribed" && aiAllowed()) await requestDraft();');
+    expect(js.match(/await requestDraft\(\)/g)).toHaveLength(1); // one automatic call site; the button uses the same function
+    expect(js).toContain('$("fillBtn").addEventListener("click", requestDraft);');
+    expect(js).not.toMatch(/setInterval\([^)]*requestDraft|requestDraft\(\)[^\n]*retry/); // no loop, no retry
+  });
+});

@@ -54,7 +54,7 @@
   <section class="card" aria-labelledby="h-sub">
     <h2 id="h-sub">0. Suscripción de la clínica</h2>
     <div class="row"><span id="subState" class="note">Consultando…</span> <button id="subBtn" type="button" class="hidden">Suscribirme con PayPal</button></div>
-    <p class="note">La clínica paga la IA del expediente con una suscripción mensual (PayPal sandbox). Sin suscripción activa, «Generar borrador con IA» queda desactivado; la grabación y la transcripción siguen funcionando. Cancelar: desde la cuenta de PayPal.</p>
+    <p class="note">La clínica paga la IA del expediente con una suscripción mensual (PayPal sandbox). Sin suscripción activa, el borrador con IA (automático al terminar la transcripción, o «Regenerar») queda desactivado; la grabación y la transcripción siguen funcionando. Cancelar: desde la cuenta de PayPal.</p>
   </section>
 
   <section class="card" aria-labelledby="h-pick">
@@ -92,7 +92,7 @@
     </section>
     <section class="card" aria-labelledby="h-form">
       <h2 id="h-form">5. Expediente</h2>
-      <div class="row"><button id="fillBtn" type="button">Generar borrador con IA</button> <span id="fillState" class="note"></span></div>
+      <div class="row"><button id="fillBtn" type="button">Generar borrador con IA</button> <span id="fillState" class="note">El borrador se genera solo al terminar la transcripción; «Regenerar» lo pide de nuevo.</span></div>
       <form id="soap" autocomplete="off"></form>
       <h3>Cobro</h3>
       <div class="row"><button id="previewBtn" type="button" class="secondary">Calcular cobro</button> <span id="previewState" class="note">Desglose del cobro antes de aprobar: consulta, medicamentos vendidos y vacunas.</span></div>

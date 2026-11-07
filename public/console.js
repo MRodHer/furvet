@@ -190,6 +190,8 @@
       setStatus(`Transcrito: ${data.segments} segmentos, ${data.seconds} s${data.labeled ? "" : " (hablantes sin etiquetar)"}.`, "ok");
       $("recLabel").textContent = "Listo";
       await refresh();
+      // Auto-draft: once per finished transcription, only when the clinic may use the AI (else the notice stays).
+      if (consult.status === "transcribed" && aiAllowed()) await requestDraft();
     });
     recorder.start();
     const startedAt = Date.now();
@@ -331,17 +333,21 @@
     const disc = draft ? draft.grounding.discarded : [];
     if (!disc.length) list.append(el("li", { class: "note", textContent: draft ? "Nada descartado." : "Nada todavía." }));
     for (const d of disc) list.append(el("li", {}, el("strong", { textContent: d.path }), `: ${REASON[d.reason] || d.reason} `, d.quote ? el("q", { textContent: d.quote }) : ""));
-    $("fillState").textContent = draft ? `Borrador del ${clinicTime(draft.created_at)}` : "Sin borrador.";
+    $("fillState").textContent = draft ? `Borrador del ${clinicTime(draft.created_at)}. Revísalo y apruébalo; nada sale al dueño sin tu clic.` : "Sin borrador.";
+    $("fillBtn").textContent = draft ? "Regenerar borrador con IA" : "Generar borrador con IA";
     if (!aiAllowed()) { $("fillBtn").disabled = true; $("fillState").textContent = "La IA está desactivada: la clínica no tiene suscripción activa (ver tarjeta 0)."; }
   }
-  $("fillBtn").addEventListener("click", async () => {
+  // One request per click or per finished transcription: no retry, no loop. The server's subscription
+  // gate (402) is the authority; the console only avoids a call it knows will be refused.
+  async function requestDraft() {
     $("fillBtn").disabled = true; $("fillState").textContent = "Pidiendo el borrador a la IA…";
     const { ok, status, data } = await api(`/${consultId}/fill`, { method: "POST" });
     $("fillBtn").disabled = false;
     if (status === 402) { await loadSubscription(); $("fillBtn").disabled = true; $("fillState").textContent = "La IA está desactivada: la clínica no tiene suscripción activa (ver tarjeta 0)."; return; }
-    if (!ok) { $("fillState").textContent = `No se pudo generar (${data.error || ""}). Intenta de nuevo.`; return; }
+    if (!ok) { $("fillState").textContent = `No se pudo generar (${data.error || ""}). Pulsa «Regenerar» para intentar de nuevo.`; return; }
     await refresh();
-  });
+  }
+  $("fillBtn").addEventListener("click", requestDraft);
 
   // Approval body: every leaf tagged with its source (ai keeps the evidence; doctor is a plain entry).
   // The route /approve is served by the billing step; the server re-validates everything.
