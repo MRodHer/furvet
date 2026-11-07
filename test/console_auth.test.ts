@@ -39,3 +39,17 @@ describe("doctor console auth (V16, D.7)", () => {
     expect(html).not.toMatch(/<script[^>]*src=["']https?:/);
   });
 });
+
+describe("console: automatic AI draft after transcription (encargo fix-movil ítem 1)", () => {
+  it("AD1: console.js fires the draft once after a finished transcription, only through the shared requestDraft and only when the clinic may use the AI (pin on the served script; behaviour not measured in a browser)", async () => {
+    const js = await (await env.ASSETS.fetch(new Request("https://furvet.test/console.js"))).text();
+    expect(js).toContain("if (aiAllowed()) await requestDraft(id); else await refresh();"); // the automatic call, gated
+    // Exactly three mentions: the definition, the automatic call, the button. Any extra call site (a loop, a retry) breaks this.
+    expect(js.match(/requestDraft\(/g)).toHaveLength(3);
+    expect(js).toContain('$("fillBtn").addEventListener("click", () => requestDraft(consultId));');
+    expect(js).toContain("if (drafting) return;"); // never two drafts in flight
+    // The client half of the gate: default closed, open only with an active subscription or the documented switch.
+    expect(js).toContain('let subscription = { status: "none", required: true };');
+    expect(js).toContain('const aiAllowed = () => !subscription.required || subscription.status === "active";');
+  });
+});
