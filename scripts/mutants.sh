@@ -185,4 +185,6 @@ run_mutant "ACTIVATED stops checking the plan id" src/subscription.ts \
   's/if (planId !== sub.plan_id) {/if (false) {/' test/subscription.test.ts || status=1
 run_mutant "a sale activates whatever its amount" src/subscription.ts \
   's/state = amountOk \&\& sub.state === "approval_pending" ? "active" : null;/state = sub.state === "approval_pending" ? "active" : null;/' test/subscription.test.ts || status=1
+run_mutant "payment_pending ignores the ledger status (chat would poll forever after capture)" src/routes/sim.ts \
+  "s/ AND COALESCE(status, 'created') NOT IN ('captured', 'amount_mismatch', 'denied')//" test/sim.test.ts || status=1
 exit $status

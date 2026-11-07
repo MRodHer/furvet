@@ -74,7 +74,14 @@ export function simRoutes(deps: Deps, paypalFor: (env: Env) => PayPalClient | nu
     const conv = await c.env.DB.prepare("SELECT owner_consent_at, owner_consent_version FROM conversations WHERE id = ?1")
       .bind(session.data)
       .first<{ owner_consent_at: string | null; owner_consent_version: string | null }>();
-    return c.json({ messages: results, consent: conv ?? null });
+    // A deposit or balance still unpaid (ledger view, read-only): the chat re-reads the thread only while this
+    // is true, so the webhook's confirmation shows up without the owner writing anything.
+    const pending = await c.env.DB.prepare(
+      "SELECT 1 AS x FROM charges_current WHERE conversation_id = ?1 AND COALESCE(status, 'created') NOT IN ('captured', 'amount_mismatch', 'denied') LIMIT 1",
+    )
+      .bind(session.data)
+      .first();
+    return c.json({ messages: results, consent: conv ?? null, payment_pending: pending !== null });
   });
 
   // The CONSENT comes from a button, never from the model. Versioned text, first click wins.
