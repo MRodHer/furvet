@@ -170,7 +170,7 @@ describe("printable rx and account ticket (RX1, TK1–TK5)", () => {
     for (const bad of ["2026-11-05", "2023-02-30", "ayer", "", null]) expect(ageLabel(bad, at), String(bad)).toBeNull();
   });
 
-  it("RX2 (adenda): unknown breed, age, sex and weight → blank lines to fill by hand, never «null» or «undefined»; clinic letterhead vars missing → empty, not «undefined»", async () => {
+  it("RX2 (adenda): unknown breed, age, sex and weight → blank lines to fill by hand, never «null» or «undefined»; owner who gave no name → em dash, never the «Visitante» DB default; clinic letterhead vars missing → empty, not «undefined»", async () => {
     const seeded = await seedConsult();
     const { app } = makeApp(fakes());
     const body = approvedBody(seeded.ids, { vitals: {} });
@@ -178,7 +178,9 @@ describe("printable rx and account ticket (RX1, TK1–TK5)", () => {
     const res = await app.request(`/api/v1/consults/${seeded.consult}/approve`, { method: "POST", headers: doctorHeaders({ "Content-Type": "application/json" }), body: JSON.stringify(body) }, e);
     expect(res.status).toBe(201);
     const text = await pdfText(await app.request(`/api/v1/consults/${seeded.consult}/rx.pdf`, { headers: doctorHeaders() }, e));
-    for (const s of ["Tutor: Visitante", "Raza: ____", "Edad: ____", "Peso: ____", "Sexo: ____"]) expect(text, s).toContain(s);
+    for (const s of ["Raza: ____", "Edad: ____", "Peso: ____", "Sexo: ____"]) expect(text, s).toContain(s);
+    expect(text).toContain("Tutor:");
+    expect(text).not.toContain("Visitante"); // the contacts.name DB default is normalized to an em dash, never printed
     expect(text).not.toMatch(/null|undefined/);
     expect(text).not.toContain("Calle Ejemplo");
   });

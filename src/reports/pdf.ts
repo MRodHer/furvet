@@ -5,12 +5,14 @@
 import { wrapText } from "../prior/text";
 import { pngIdat, type CleanImage } from "../images";
 
-export type Block = { kind: "h1" | "h2" | "p" | "small"; text: string } | { kind: "image"; image: CleanImage; caption: string };
+export type Block =
+  | { kind: "h1" | "h2" | "p" | "small"; text: string }
+  | { kind: "styled"; text: string; size: number; bold?: boolean; gap?: number; indent?: number } // explicit size/weight; indent in spaces, kept in the literal
+  | { kind: "cols"; left: string; right: string; size: number } // two columns at fixed x (a simple table row)
+  | { kind: "rule" } // thin full-width horizontal divider
+  | { kind: "image"; image: CleanImage; caption: string };
 
-const PAGE_W = 595;
-const PAGE_H = 842;
-const MARGIN = 40;
-const TEXT_W = PAGE_W - 2 * MARGIN;
+const A4 = { w: 595, h: 842, margin: 40 } as const;
 const STYLE = { h1: [16, 2, 22], h2: [12, 2, 17], p: [10, 1, 13], small: [8, 1, 11] } as const; // size, font, leading
 // Helvetica averages ≈0.5 em per glyph; 0.55 keeps lines inside the margin.
 const approxFont = { widthOfTextAtSize: (t: string, s: number) => t.length * 0.55 * s };
@@ -35,7 +37,11 @@ function latin1(s: string): Uint8Array {
   return out;
 }
 
-export function buildPdf(blocks: Block[]): Uint8Array {
+export function buildPdf(blocks: Block[], page: { w: number; h: number; margin: number } = A4): Uint8Array {
+  const PAGE_W = page.w;
+  const PAGE_H = page.h;
+  const MARGIN = page.margin;
+  const TEXT_W = PAGE_W - 2 * MARGIN;
   const pages: string[][] = [[]];
   const images: { obj: string; data: Uint8Array }[] = [];
   let y = PAGE_H - MARGIN;
@@ -50,6 +56,29 @@ export function buildPdf(blocks: Block[]): Uint8Array {
   };
 
   for (const b of blocks) {
+    if (b.kind === "styled") {
+      if (b.gap) y -= b.gap;
+      const leading = Math.round(b.size * 1.26);
+      const pad = b.indent ? " ".repeat(b.indent) : ""; // leading spaces survive into the PDF literal (wrapText would strip them)
+      const w = TEXT_W - (b.indent ? b.indent * 0.55 * b.size : 0);
+      for (const l of wrapText(b.text, approxFont, b.size, w, 200)) line(pad + l, b.size, b.bold ? 2 : 1, leading);
+      continue;
+    }
+    if (b.kind === "cols") {
+      const leading = Math.round(b.size * 1.26);
+      if (y - leading < MARGIN) newPage();
+      y -= leading;
+      const midX = MARGIN + TEXT_W / 2;
+      pages[pages.length - 1]?.push(`BT /F1 ${b.size} Tf ${MARGIN} ${y.toFixed(1)} Td ${pdfString(b.left)} Tj ET`, `BT /F1 ${b.size} Tf ${midX.toFixed(1)} ${y.toFixed(1)} Td ${pdfString(b.right)} Tj ET`);
+      continue;
+    }
+    if (b.kind === "rule") {
+      y -= 5;
+      if (y < MARGIN) newPage();
+      pages[pages.length - 1]?.push(`${MARGIN} ${y.toFixed(1)} m ${(MARGIN + TEXT_W).toFixed(1)} ${y.toFixed(1)} l 0.6 w S`);
+      y -= 7;
+      continue;
+    }
     if (b.kind === "image") {
       const { image } = b;
       const scale = Math.min(TEXT_W / image.width, 300 / image.height, 1);
