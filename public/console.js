@@ -4,6 +4,14 @@
 (() => {
   "use strict";
   const $ = (id) => document.getElementById(id);
+  // Cards are <details>. On a phone (< 640 px) only the step the doctor is on stays open; the flow moves it along
+  // (refresh decides). On a desktop everything stays open (the HTML ships them open). Folding never touches the
+  // recorder: its state lives in the card's <summary>, visible either way.
+  const narrow = matchMedia("(max-width: 639px)");
+  function focusSection(id) {
+    if (!narrow.matches) return;
+    for (const d of document.querySelectorAll("details.card")) d.open = d.id === id;
+  }
   // Same zone and style as src/time.ts (clinic-local, never the browser zone); scripts/checks.sh keeps them in step.
   const clinicTime = (iso) => new Intl.DateTimeFormat("es-MX", { timeZone: "America/Mexico_City", dateStyle: "medium", timeStyle: "short" }).format(new Date(iso));
   const DOCTOR_CONSENT_VERSION = "doctor-v1-2026-11-04";
@@ -120,6 +128,7 @@
     $("approveBtn").disabled = !data.draft || consult.status !== "drafted";
     if (data.approved_version_id) { $("approveState").textContent = "Ya aprobada."; $("fillBtn").disabled = true; } // the server answers 409 anyway
     await renderDelivery();
+    focusSection(data.approved_version_id ? "deliveryCard" : hasTranscript ? "formCard" : doctorDone ? "recCard" : "consentCard");
   }
 
   // ---------- 6. delivery: explanation release + balance charge (both one-shot on the server) ----------
@@ -417,4 +426,5 @@
 
   loadSubscription();
   loadAppointments();
+  focusSection("pickCard");
 })();

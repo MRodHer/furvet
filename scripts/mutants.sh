@@ -212,4 +212,6 @@ run_mutant "deposit confirmation ignores the appointment (bot repeats day and ho
   's/return appt ? `¡Pago recibido!/return !appt ? `¡Pago recibido!/' test/webhook.test.ts || status=1
 run_mutant "sim.js renders fenced blocks as plain text (no <pre>)" public/sim.js \
   's/const pre = document.createElement("pre");/const pre = document.createElement("span");/' test/ticket.test.ts || status=1
+run_mutant "console folds cards on a desktop too (narrow gate removed)" public/console.js \
+  's/if (!narrow.matches) return;/if (false) return;/' test/console_auth.test.ts || status=1
 exit $status

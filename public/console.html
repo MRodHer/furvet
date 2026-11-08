@@ -12,7 +12,8 @@
   main { max-width: 1200px; margin: 0 auto; padding: 16px; }
   h1 { font-size: 1.2rem; margin: 0 0 4px; } h2 { font-size: 1rem; margin: 16px 0 8px; } h3 { font-size:.9rem; margin: 12px 0 4px; color:var(--muted); text-transform: uppercase; letter-spacing:.03em; }
   .note { color: var(--muted); font-size: .85rem; }
-  section.card { background:#fff; border:1px solid #e5e7eb; border-radius:12px; padding:12px; margin: 10px 0; }
+  details.card { background:#fff; border:1px solid #e5e7eb; border-radius:12px; padding:12px; margin: 10px 0; }
+  details.card > summary { cursor:pointer; } details.card > summary h2 { display:inline; margin:0; }
   button { padding:8px 12px; border:0; border-radius:8px; background:var(--accent); color:#fff; font-size:.95rem; cursor:pointer; }
   button[disabled] { opacity:.45; cursor:not-allowed; }
   button.secondary { background:#e5e7eb; color:var(--ink); }
@@ -51,14 +52,14 @@
   <h1>FurVet — consola de la doctora</h1>
   <p class="note">Demo del hackatón: datos ficticios. El audio se transcribe y se descarta; nunca se guarda. Lo que marca <span class="badge">IA</span> viene de la transcripción y lleva su frase; lo que la IA no pudo sustentar aparece en «Descartado», nunca prellenado. Nada sale al dueño hasta que apruebes.</p>
 
-  <section class="card" aria-labelledby="h-sub">
-    <h2 id="h-sub">0. Suscripción de la clínica</h2>
+  <details class="card" id="subCard" aria-labelledby="h-sub" open>
+    <summary><h2 id="h-sub">0. Suscripción de la clínica</h2></summary>
     <div class="row"><span id="subState" class="note">Consultando…</span> <button id="subBtn" type="button" class="hidden">Suscribirme con PayPal</button></div>
     <p class="note">La clínica paga la IA del expediente con una suscripción mensual (PayPal sandbox). Sin suscripción activa, el borrador con IA (automático al terminar la transcripción, o «Regenerar») queda desactivado; la grabación y la transcripción siguen funcionando. Cancelar: desde la cuenta de PayPal.</p>
-  </section>
+  </details>
 
-  <section class="card" aria-labelledby="h-pick">
-    <h2 id="h-pick">1. Consulta</h2>
+  <details class="card" id="pickCard" aria-labelledby="h-pick" open>
+    <summary><h2 id="h-pick">1. Consulta</h2></summary>
     <div class="row">
       <label for="apptSel" class="sr-only">Cita</label>
       <select id="apptSel" style="max-width:520px"></select>
@@ -66,32 +67,31 @@
       <button id="reloadBtn" type="button" class="secondary">Actualizar lista</button>
     </div>
     <p class="note">Sólo aparecen citas con anticipo capturado. <span id="consultMeta"></span></p>
-  </section>
+  </details>
 
-  <section class="card hidden" id="consentCard" aria-labelledby="h-consent">
-    <h2 id="h-consent">2. Consentimiento de grabación (dos capas)</h2>
+  <details class="card hidden" id="consentCard" aria-labelledby="h-consent" open>
+    <summary><h2 id="h-consent">2. Consentimiento de grabación (dos capas)</h2></summary>
     <p>Dueño (en el chat): <strong id="ownerConsent">—</strong></p>
     <label><input type="checkbox" id="doctorBox"> Confirmo que el dueño fue informado y acepta que se grabe la consulta; el audio se borra en cuanto se transcribe. (texto <code>doctor-v1-2026-11-04</code>)</label>
     <div class="row" style="margin-top:6px"><button id="doctorConsentBtn" type="button" disabled>Registrar mi confirmación</button> <span id="doctorConsentState" class="note"></span></div>
-  </section>
+  </details>
 
-  <section class="card hidden" id="recCard" aria-labelledby="h-rec">
-    <h2 id="h-rec">3. Grabación</h2>
+  <details class="card hidden" id="recCard" aria-labelledby="h-rec" open>
+    <summary><h2 id="h-rec">3. Grabación</h2> <span><span class="rec" id="recDot" aria-hidden="true"></span><span id="recLabel">Sin grabar</span> · <span id="timer">00:00</span></span></summary>
     <div class="row">
       <button id="recBtn" type="button" disabled>Grabar</button>
-      <span><span class="rec" id="recDot" aria-hidden="true"></span><span id="recLabel">Sin grabar</span> · <span id="timer">00:00</span></span>
       <span class="note">Tope 30 min · un solo archivo al terminar · se envía al detener</span>
     </div>
     <div id="status" aria-live="polite"></div>
-  </section>
+  </details>
 
   <div class="cols hidden" id="work">
-    <section class="card" aria-labelledby="h-tr">
-      <h2 id="h-tr">4. Transcripción <span class="note">(clic en la etiqueta cambia quién habla)</span></h2>
+    <details class="card" id="trCard" aria-labelledby="h-tr" open>
+      <summary><h2 id="h-tr">4. Transcripción <span class="note">(clic en la etiqueta cambia quién habla)</span></h2></summary>
       <div id="transcript"></div>
-    </section>
-    <section class="card" aria-labelledby="h-form">
-      <h2 id="h-form">5. Expediente</h2>
+    </details>
+    <details class="card" id="formCard" aria-labelledby="h-form" open>
+      <summary><h2 id="h-form">5. Expediente</h2></summary>
       <div class="row"><button id="fillBtn" type="button">Generar borrador con IA</button> <span id="fillState" class="note"></span></div>
       <form id="soap" autocomplete="off"></form>
       <h3>Cobro</h3>
@@ -100,9 +100,9 @@
       <h3>Descartado por falta de sustento</h3>
       <ul id="discarded"><li class="note">Nada todavía.</li></ul>
       <div class="row" style="margin-top:12px"><button id="approveBtn" type="button" disabled>Aprobar consulta</button> <span id="approveState" class="note"></span></div>
-    </section>
-    <section class="card hidden" id="deliveryCard" aria-labelledby="h-delivery">
-      <h2 id="h-delivery">6. Entrega al dueño</h2>
+    </details>
+    <details class="card hidden" id="deliveryCard" aria-labelledby="h-delivery" open>
+      <summary><h2 id="h-delivery">6. Entrega al dueño</h2></summary>
       <p class="note">Al aprobar, el dueño recibió las indicaciones urgentes y la cuenta. La receta NO se envía: imprímala, fírmela y entréguela. Lo escrito por la IA sólo llega al dueño si usted lo envía.</p>
       <div class="row"><button id="printRxBtn" type="button" class="secondary">Imprimir receta</button> <span class="note">Se abre en pestaña nueva (PDF para firmar a mano).</span></div>
       <h3>Explicación en palabras sencillas <span id="explainSource" class="note"></span></h3>
@@ -111,7 +111,7 @@
       <h3>Cobro del saldo</h3>
       <table id="billTable" class="bill"></table>
       <div class="row"><button id="chargeBtn" type="button" disabled>Generar cobro</button> <span id="chargeState" class="note"></span></div>
-    </section>
+    </details>
   </div>
 </main>
 <script src="/console.js"></script>
