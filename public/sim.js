@@ -44,20 +44,28 @@
   function render(direction, text) {
     const div = document.createElement("div");
     div.className = `msg ${direction}`;
-    // Split out sandbox PayPal URLs so they become clickable; everything else stays text.
-    const parts = text.split(/(https?:\/\/\S+)/g);
-    for (const part of parts) {
-      if (part.startsWith(PAYPAL_ALLOWED)) {
-        const a = document.createElement("a");
-        a.href = part;
-        a.textContent = "Pagar con PayPal (sandbox)";
-        a.target = "_blank";
-        a.rel = "noopener noreferrer";
-        div.appendChild(a);
-      } else {
-        div.appendChild(document.createTextNode(part));
+    // Fenced blocks (the account ticket) go verbatim into a <pre>; in the rest, sandbox PayPal URLs become
+    // clickable. Everything is textContent/text nodes: never markup.
+    text.split(/```\n?([\s\S]*?)\n?```/g).forEach((chunk, i) => {
+      if (i % 2) {
+        const pre = document.createElement("pre");
+        pre.textContent = chunk;
+        div.appendChild(pre);
+        return;
       }
-    }
+      for (const part of chunk.split(/(https?:\/\/\S+)/g)) {
+        if (part.startsWith(PAYPAL_ALLOWED)) {
+          const a = document.createElement("a");
+          a.href = part;
+          a.textContent = "Pagar con PayPal (sandbox)";
+          a.target = "_blank";
+          a.rel = "noopener noreferrer";
+          div.appendChild(a);
+        } else {
+          div.appendChild(document.createTextNode(part));
+        }
+      }
+    });
     log.appendChild(div);
     log.scrollTop = log.scrollHeight;
   }

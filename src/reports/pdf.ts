@@ -1,4 +1,4 @@
-// Minimal PDF writer: Helvetica text (WinAnsi) + JPEG/PNG images embedded WITHOUT decoding.
+// Minimal PDF writer: Helvetica/Courier text (WinAnsi) + JPEG/PNG images embedded WITHOUT decoding.
 // Hand-written on purpose: pdf-lib measured 30–61 ms per report in workerd and the Workers
 // free plan allows 10 ms of CPU per request (developers.cloudflare.com/workers/platform/limits).
 // Output is plain text objects, no compression, no markup → nothing to inject.
@@ -10,6 +10,7 @@ export type Block =
   | { kind: "styled"; text: string; size: number; bold?: boolean; gap?: number; indent?: number } // explicit size/weight; indent in spaces, kept in the literal
   | { kind: "cols"; left: string; right: string; size: number } // two columns at fixed x (a simple table row)
   | { kind: "rule" } // thin full-width horizontal divider
+  | { kind: "mono"; lines: string[] } // preformatted lines in Courier, written verbatim (spaces kept, no wrapping)
   | { kind: "image"; image: CleanImage; caption: string };
 
 const A4 = { w: 595, h: 842, margin: 40 } as const;
@@ -72,6 +73,10 @@ export function buildPdf(blocks: Block[], page: { w: number; h: number; margin: 
       pages[pages.length - 1]?.push(`BT /F1 ${b.size} Tf ${MARGIN} ${y.toFixed(1)} Td ${pdfString(b.left)} Tj ET`, `BT /F1 ${b.size} Tf ${midX.toFixed(1)} ${y.toFixed(1)} Td ${pdfString(b.right)} Tj ET`);
       continue;
     }
+    if (b.kind === "mono") {
+      for (const l of b.lines) line(l, 9, 3, 11); // 32 cols x 0.6 em x 9 pt = 172.8 pt, inside the 80 mm ticket
+      continue;
+    }
     if (b.kind === "rule") {
       y -= 5;
       if (y < MARGIN) newPage();
@@ -107,13 +112,14 @@ export function buildPdf(blocks: Block[], page: { w: number; h: number; margin: 
     for (const l of wrapText(b.text, approxFont, size, TEXT_W, 200)) line(l, size, font, leading);
   }
 
-  // Objects: 1 catalog, 2 pages, 3 F1, 4 F2, then per page (page, content), then images.
+  // Objects: 1 catalog, 2 pages, 3 F1, 4 F2, 5 F3 (Courier), then per page (page, content), then images.
   const objs: (string | Uint8Array)[][] = [];
   const add = (parts: (string | Uint8Array)[]) => objs.push(parts) && objs.length;
   add(["<< /Type /Catalog /Pages 2 0 R >>"]);
   const pagesIdx = add(["PLACEHOLDER"]) - 1;
   add(["<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>"]);
   add(["<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>"]);
+  add(["<< /Type /Font /Subtype /Type1 /BaseFont /Courier /Encoding /WinAnsiEncoding >>"]);
   const imageRefs = images.map(() => 0);
   const pageIds: number[] = [];
   const xobjects = () => imageRefs.map((id, i) => `/Im${i + 1} ${id} 0 R`).join(" ");
@@ -126,7 +132,7 @@ export function buildPdf(blocks: Block[], page: { w: number; h: number; margin: 
     const contentId = add([`<< /Length ${content.length} >>\nstream\n${content}\nendstream`]);
     pageIds.push(
       add([
-        `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${PAGE_W} ${PAGE_H}] /Resources << /Font << /F1 3 0 R /F2 4 0 R >> /XObject << ${xobjects()} >> >> /Contents ${contentId} 0 R >>`,
+        `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${PAGE_W} ${PAGE_H}] /Resources << /Font << /F1 3 0 R /F2 4 0 R /F3 5 0 R >> /XObject << ${xobjects()} >> >> /Contents ${contentId} 0 R >>`,
       ]),
     );
   }

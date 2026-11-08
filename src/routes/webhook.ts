@@ -17,10 +17,16 @@ import { messageInserts, newToken, tokenInsert } from "../delivery";
 import { readCapped } from "../body";
 import { valueToCents } from "../money";
 import { errName, log } from "../log";
+import { formatClinicTime } from "../time";
 import { handleSubscriptionEvent } from "../subscription";
 
 const MAX_BODY_BYTES = 64 * 1024;
-export const DEPOSIT_CONFIRMED_TEXT = "¡Recibimos tu pago de anticipo! Tu cita quedó confirmada. 🐾";
+/** Fallback when the appointment row cannot be read (D4): still one fixed confirmation, no payer data. */
+export const DEPOSIT_CONFIRMED_TEXT = "¡Pago recibido! Tu cita quedó confirmada. 🐾";
+/** The ONE deposit confirmation: pet, day and hour (clinic-local), so the bot has nothing left to repeat. */
+export function depositConfirmedText(appt: { pet_name: string; starts_at: string } | null): string {
+  return appt ? `¡Pago recibido! ${appt.pet_name} queda agendado el ${formatClinicTime(appt.starts_at)}. 🐾` : DEPOSIT_CONFIRMED_TEXT;
+}
 
 const EventSchema = z.object({
   id: z.string().min(1).max(100),
@@ -189,9 +195,12 @@ async function recordAndSettle(
   if (status === "captured" && charge.kind === "deposit" && charge.appointment_id) {
     stmts.push(env.DB.prepare("UPDATE appointments SET status = 'confirmed' WHERE id = ?1 AND status = 'pending_deposit' AND changes() = 1").bind(charge.appointment_id));
     // The owner hears it in the chat only when THIS batch confirmed the appointment (changes() = 1 of the
-    // UPDATE above): a replay or a concurrent duplicate confirms nothing and says nothing. Fixed text, no
-    // payer data, no link. is_bot = 1 so the agent keeps answering (an is_bot = 0 outbound mutes it, E13).
-    if (charge.conversation_id) stmts.push(...messageInserts(env.DB, charge.conversation_id, DEPOSIT_CONFIRMED_TEXT, "changes() = 1", [], 1));
+    // UPDATE above): a replay or a concurrent duplicate confirms nothing and says nothing. Pet + slot read from
+    // OUR appointment row (never the payload); no payer data, no link. is_bot = 1 so the agent keeps answering (E13).
+    if (charge.conversation_id) {
+      const appt = await env.DB.prepare("SELECT p.name AS pet_name, s.starts_at FROM appointments a JOIN pets p ON p.id = a.pet_id JOIN slots s ON s.id = a.slot_id WHERE a.id = ?1").bind(charge.appointment_id).first<{ pet_name: string; starts_at: string }>();
+      stmts.push(...messageInserts(env.DB, charge.conversation_id, depositConfirmedText(appt), "changes() = 1", [], 1));
+    }
   }
   if (status === "captured" && charge.kind === "balance" && charge.consult_id && charge.conversation_id) {
     // The report link needs a clear token, which only exists at creation time → a fresh one per release.
@@ -200,7 +209,7 @@ async function recordAndSettle(
     const tokenLanded = (n: number) => `EXISTS (SELECT 1 FROM delivery_tokens WHERE token_sha256 = ?${n})`;
     stmts.push(
       tokenInsert(env.DB, hash, charge.consult_id, "report", new Date(), "changes() = 1"),
-      ...messageInserts(env.DB, charge.conversation_id, `Pago confirmado. Su informe completo está aquí: ${base}/r/${token}`, tokenLanded(4), [hash]),
+      ...messageInserts(env.DB, charge.conversation_id, `¡Pago recibido! Aquí está tu informe completo: ${base}/r/${token}`, tokenLanded(4), [hash]),
       env.DB.prepare(`UPDATE consults SET status = 'delivered' WHERE id = ?1 AND status = 'approved' AND ${tokenLanded(2)}`).bind(charge.consult_id, hash),
     );
   }

@@ -6,3 +6,8 @@ export const CLINIC_TIME_FORMAT: Intl.DateTimeFormatOptions = { timeZone: CLINIC
 export function formatClinicTime(iso: string): string {
   return new Intl.DateTimeFormat("es-MX", CLINIC_TIME_FORMAT).format(new Date(iso));
 }
+
+/** dd/mm/yyyy, clinic-local (ticket header, appointment date in the chat). */
+export function formatClinicDate(iso: string): string {
+  return new Intl.DateTimeFormat("es-MX", { timeZone: CLINIC_TZ, day: "2-digit", month: "2-digit", year: "numeric" }).format(new Date(iso));
+}

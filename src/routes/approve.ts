@@ -21,7 +21,7 @@ import type { PayPalClient } from "../paypal";
 import { MAX_EXPLANATION_CHARS, plainExplanation } from "../reports/explain";
 import { buildPdf } from "../reports/pdf";
 import { PRIVATE } from "./report";
-import { billTextLines, leafSource, leafValue, reportBlocks, RX_PAGE, rxBlocks, ticketBlocks, urgentLines, type ReportHeader, type RxDetails } from "../reports/render";
+import { leafSource, leafValue, reportBlocks, RX_PAGE, rxBlocks, ticketBlocks, ticketChat, ticketPage, urgentLines, type ReportHeader, type RxDetails } from "../reports/render";
 
 const CONSULT_SKU = "CONSULTA-GENERAL";
 // The approved snapshot, in BillLine shape: the only price source after approval (never catalog_items again).
@@ -214,22 +214,19 @@ export function approveRoutes(deps: Deps, paypalFor: (env: Env) => PayPalClient 
     const rxDetails: RxDetails = { ownerName: owner?.name ?? "", breed: consult.breed, sex: consult.sex, birthDate: consult.birth_date, clinicAddress: env.CLINIC_ADDRESS, clinicPhone: env.CLINIC_PHONE, clinicEmail: env.CLINIC_EMAIL };
     // Both PDFs land in R2 BEFORE the D1 batch: a failed put means no approval at all, never a half one.
     await env.FILES.put(`reports/${approvalId}/rx.pdf`, buildPdf(rxBlocks(body, header, rxDetails), RX_PAGE), { httpMetadata: { contentType: "application/pdf" } });
-    await env.FILES.put(`reports/${approvalId}/ticket.pdf`, buildPdf(ticketBlocks(header, bill, env.CURRENCY)), { httpMetadata: { contentType: "application/pdf" } });
+    const ticketPdf = ticketBlocks(header, bill, env.CURRENCY);
+    await env.FILES.put(`reports/${approvalId}/ticket.pdf`, buildPdf(ticketPdf, ticketPage(ticketPdf)), { httpMetadata: { contentType: "application/pdf" } });
 
-    // The owner's message: urgent instructions, the fixed rx notice (the rx itself is printed and signed by
-    // the doctor, never sent: a digital rx could be reprinted), the bill and the ticket link. No rx data, no owner name.
+    // The owner's message: urgent instructions and the fixed rx notice (the rx itself is printed and signed by
+    // the doctor, never sent: a digital rx could be reprinted). No rx data, no owner name. The account travels
+    // ONCE: with the pay link («Generar cobro») when there is a balance, here when the deposit covered it all.
     const ownerText = [
       `Consulta de ${consult.pet_name} aprobada por el médico.`,
       ...(urgentLines(body).length ? ["", "INDICACIONES URGENTES:", ...urgentLines(body).map((u) => `• ${u}`)] : []),
       "La receta te la entrega la doctora impresa y firmada.",
-      "",
-      "Cuenta:",
-      ...billTextLines(bill, env.CURRENCY),
-      "",
-      `Cuenta en PDF: ${base}/t/${ticket.token}`,
-      bill.balanceCents > 0
-        ? `Informe completo: ${base}/r/${report.token} (se libera al confirmarse el pago del saldo ${formatCents(bill.balanceCents, env.CURRENCY)}; la clínica le enviará la liga de pago)`
-        : `Informe completo: ${base}/r/${report.token}`,
+      ...(bill.balanceCents > 0
+        ? []
+        : ["", ...ticketChat(bill, env.CURRENCY, { clinicName: env.CLINIC_NAME, petName: consult.pet_name, date: now.toISOString() }), `Ticket en PDF: ${base}/t/${ticket.token}`, `Informe completo: ${base}/r/${report.token}`]),
     ].join("\n");
 
     const guard = (n: number) => `EXISTS (SELECT 1 FROM consult_bills WHERE approval_id = ?${n})`;
@@ -299,11 +296,19 @@ export function approveRoutes(deps: Deps, paypalFor: (env: Env) => PayPalClient 
       items: lines.map((l) => ({ name: l.name, quantity: l.quantity, unitCents: l.unitPriceCents })),
       discountCents: bill.deposit_cents,
     });
-    const text = [`Cuenta de la consulta de ${consult.pet_name}:`, ...billTextLines(snapshot, env.CURRENCY), "", `Liga para pagar el saldo de la consulta de ${consult.pet_name} (${formatCents(bill.balance_cents, env.CURRENCY)}): ${order.approveUrl}`, "Al confirmarse el pago recibirá el informe completo."].join("\n");
-    // claim (header → event) → message, each statement chained on "the previous one landed".
+    // The account, once: the 32-column ticket, its PDF link (a fresh token: the clear one only exists at
+    // creation) and the pay link. claim (header → event) → token → message, each chained on "the previous one landed".
+    const ticket = await newToken();
+    const text = [
+      ...ticketChat(snapshot, env.CURRENCY, { clinicName: env.CLINIC_NAME, petName: consult.pet_name, date: bill.created_at }),
+      `Ticket en PDF: ${env.PUBLIC_BASE_URL}/t/${ticket.token}`,
+      `Pagar saldo (${formatCents(bill.balance_cents, env.CURRENCY)}): ${order.approveUrl}. Al pagar recibirás el informe completo.`,
+    ].join("\n");
     const results = await env.DB.batch([
       ...claimChargeStatements(env.DB, { id: chargeId, kind: "balance", consultId: consult.id, conversationId: consult.conversation_id, paypalOrderId: order.orderId, paypalRequestId: chargeId, amountCents: bill.balance_cents, currency: env.CURRENCY, approveUrl: order.approveUrl }, order.raw),
-      ...messageInserts(env.DB, consult.conversation_id, text, "changes() = 1"),
+      tokenInsert(env.DB, ticket.hash, consult.id, "rx", deps.now(), "changes() = 1"),
+      // Never a /t/ link to a token that did not persist: the message hangs off the token row, not off changes().
+      ...messageInserts(env.DB, consult.conversation_id, text, "EXISTS (SELECT 1 FROM delivery_tokens WHERE token_sha256 = ?4)", [ticket.hash]),
     ]);
     if ((results[0]?.meta.changes ?? 0) !== 1) {
       const winner = await currentCharge(env.DB, "consult_id", consult.id);
@@ -328,7 +333,7 @@ export function approveRoutes(deps: Deps, paypalFor: (env: Env) => PayPalClient 
     await putReport(env, consult, bill.approval_id, body, bill.explanation, bill.explanation_source === "ai", bill.created_at);
     const results = await env.DB.batch([
       env.DB.prepare("INSERT INTO explanation_releases (consult_id, released_by) VALUES (?1, ?2) ON CONFLICT DO NOTHING").bind(consult.id, env.DOCTOR_DEMO_USER ?? "doctor"),
-      ...messageInserts(env.DB, consult.conversation_id, `Explicación sencilla de la consulta de ${consult.pet_name} (revisada por el médico):\n${bill.explanation}`, "changes() = 1"),
+      ...messageInserts(env.DB, consult.conversation_id, `Resumen de la consulta de ${consult.pet_name}, revisado por la doctora:\n${bill.explanation}`, "changes() = 1"),
     ]);
     if ((results[0]?.meta.changes ?? 0) !== 1) return c.json({ error: "already sent" }, 409);
     log("explanation_sent", { consult_id: consult.id, source: bill.explanation_source });

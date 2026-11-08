@@ -37,11 +37,13 @@ async function charged() {
   const made = makeApp(fakes());
   const body = approvedBody(s.ids, { billable: [{ catalog_item_id: s.ids["MED-AMOXI"], quantity: { value: 2, source: "doctor" } }] });
   body.prescription[0] = { ...body.prescription[0], catalog_item_id: undefined };
-  expect((await made.app.request(`/api/v1/consults/${s.consult}/approve`, { method: "POST", headers: doctorHeaders(JSON_H), body: JSON.stringify(body) }, doctorEnv())).status).toBe(201);
+  const approved = await made.app.request(`/api/v1/consults/${s.consult}/approve`, { method: "POST", headers: doctorHeaders(JSON_H), body: JSON.stringify(body) }, doctorEnv());
+  expect(approved.status).toBe(201);
+  const { report_url } = (await approved.json()) as { report_url: string };
   const out = (await (await made.app.request(`/api/v1/consults/${s.consult}/charge`, { method: "POST", headers: doctorHeaders() }, doctorEnv())).json()) as { balance_cents: number };
   const charge = (await env.DB.prepare("SELECT id, paypal_order_id FROM charges WHERE consult_id = ?1").bind(s.consult).first<{ id: string; paypal_order_id: string }>())!;
   const hook = (ev: unknown) => made.app.request("/api/v1/paypal/webhook", { method: "POST", headers: webhookHeaders(), body: JSON.stringify(ev) }, doctorEnv());
-  return { ...s, ...made, charge, value: (out.balance_cents / 100).toFixed(2), hook };
+  return { ...s, ...made, charge, report_url, value: (out.balance_cents / 100).toFixed(2), hook };
 }
 
 describe("H3: doctor login lockout (per origin only, progressive, bounded, fail-closed)", () => {
@@ -238,8 +240,8 @@ describe("I1 + I3", () => {
 
   it("I3: the 402 page carries a CSP that allows only its own inline style (header and body agree)", async () => {
     const t = await charged();
-    const token = (await env.DB.prepare("SELECT text FROM messages WHERE conversation_id = ?1 AND text LIKE '%/r/%' ORDER BY id DESC LIMIT 1").bind(t.conv).first<{ text: string }>())!.text;
-    const path = new URL(/https:\/\/\S+\/r\/[A-Za-z0-9_-]{43}/.exec(token)![0]).pathname;
+    // The /r/ link is no longer in the chat before the capture: take the console's report_url.
+    const path = new URL(t.report_url).pathname;
     const r = await t.app.request(path, {}, doctorEnv());
     expect(r.status).toBe(402);
     const html = await r.text();

@@ -2,7 +2,10 @@ import { env } from "cloudflare:test";
 import { afterEach, describe, expect, it } from "vitest";
 import type { Env } from "../src/env";
 import { claimCharge } from "../src/ledger";
-import { DEPOSIT_CONFIRMED_TEXT } from "../src/routes/webhook";
+import { DEPOSIT_CONFIRMED_TEXT, depositConfirmedText } from "../src/routes/webhook";
+
+// seedBooking: pet «Firulais», slot 2026-11-10T10:00Z = 4:00 a.m. in America/Mexico_City.
+const DEPOSIT_TEXT = depositConfirmedText({ pet_name: "Firulais", starts_at: "2026-11-10T10:00:00.000Z" });
 import {
   approvedEvent,
   assertNoPii,
@@ -31,7 +34,7 @@ async function seedDeposit(amountCents = 20000) {
   );
   const apptStatus = async () => (await env.DB.prepare("SELECT status FROM appointments WHERE id = ?1").bind(appt).first<{ status: string }>())?.status;
   const events = (where = "1=1") => count("charge_events", `charge_id = ?1 AND ${where}`, chargeId);
-  const botMsgs = () => count("messages", "conversation_id = ?1 AND direction = 'outbound' AND is_bot = 1 AND text = ?2", conv, DEPOSIT_CONFIRMED_TEXT);
+  const botMsgs = () => count("messages", "conversation_id = ?1 AND direction = 'outbound' AND is_bot = 1 AND text = ?2", conv, DEPOSIT_TEXT);
   return { appt, conv, chargeId, orderId, apptStatus, events, botMsgs };
 }
 
@@ -210,9 +213,14 @@ describe("PayPal webhook (E1-E4, E6, E14, D.1)", () => {
       const { app } = makeApp(paypalFakes({ captureValue: "200.00" }));
       expect(await (await post(app, approvedEvent("WH-D1", orderId, chargeId))).json()).toEqual({ status: "captured" });
       expect(await apptStatus()).toBe("confirmed");
-      expect(await botMsgs()).toBe(1);
+      expect(await botMsgs()).toBe(1); // the ONE confirmation: pet, day and hour from OUR appointment row
+      expect(DEPOSIT_TEXT).toMatch(/^¡Pago recibido! Firulais queda agendado el 10 nov 2026, 4:00 .*🐾$/);
       expect(await count("messages", "conversation_id = ?1 AND direction = 'outbound'", conv)).toBe(1);
+      expect(await count("messages", "conversation_id = ?1 AND text LIKE '%anticipo%'", conv)).toBe(0);
       assertNoPii(logs.lines);
+      // Fail-safe: no readable appointment row → the fixed text, never a crash and never two messages.
+      expect(depositConfirmedText(null)).toBe(DEPOSIT_CONFIRMED_TEXT);
+      expect(DEPOSIT_CONFIRMED_TEXT.startsWith("¡Pago recibido!")).toBe(true);
     });
 
     it("D2: two concurrent deliveries of the same event, then a CAPTURE.COMPLETED for the same charge → still one message", async () => {
@@ -247,7 +255,7 @@ describe("PayPal webhook (E1-E4, E6, E14, D.1)", () => {
       const { app } = makeApp(paypalFakes({ captureValue: "200.00" }));
       expect(await (await post(app, approvedEvent("WH-D4", orderId, chargeId))).json()).toEqual({ status: "captured" });
       expect((await env.DB.prepare("SELECT status FROM appointments WHERE id = ?1").bind(appt).first<{ status: string }>())?.status).toBe("confirmed");
-      expect(await count("messages", "conversation_id = ?1 AND text = ?2", conv, DEPOSIT_CONFIRMED_TEXT)).toBe(0);
+      expect(await count("messages", "conversation_id = ?1 AND text LIKE '¡Pago recibido!%'", conv)).toBe(0);
     });
 
     it("ratchet D2b: the appointment is no longer pending_deposit when the capture lands → captured event, confirmed stays, 0 messages (the guard hangs off the UPDATE, not the event INSERT)", async () => {

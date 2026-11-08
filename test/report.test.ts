@@ -55,7 +55,10 @@ describe("owner links /t (ticket) and /r (V10-V13, D.6)", () => {
     expect(await w1.json()).toEqual({ status: "captured" });
     expect(await t.msgCount()).toBe(before + 1);
     const last = await env.DB.prepare("SELECT text FROM messages WHERE conversation_id = ?1 ORDER BY id DESC LIMIT 1").bind(t.conv).first<{ text: string }>();
-    expect(last!.text).toMatch(/Pago confirmado.*\/r\/([A-Za-z0-9_-]{43})/);
+    expect(last!.text).toMatch(/^¡Pago recibido! Aquí está tu informe completo: https:\/\/furvet\.test\/r\/[A-Za-z0-9_-]{43}$/);
+    // The report is announced ONCE, here: no /r/ link anywhere before the capture.
+    const earlier = (await env.DB.prepare("SELECT text FROM messages WHERE conversation_id = ?1 AND id < (SELECT MAX(id) FROM messages WHERE conversation_id = ?1)").bind(t.conv).all<{ text: string }>()).results;
+    expect(earlier.map((m) => m.text).join("\n")).not.toContain("/r/");
     const newLink = /https:\/\/furvet\.test\/r\/[A-Za-z0-9_-]{43}/.exec(last!.text)![0];
     for (const url of [t.out.report_url, newLink]) {
       const r = await t.get(url);
@@ -185,7 +188,7 @@ describe("printable rx and account ticket (RX1, TK1–TK5)", () => {
     expect(text).not.toContain("Calle Ejemplo");
   });
 
-  it("TK1/TK2: ticket.pdf = every bill_line with quantity, unit price and subtotal; Σ = total; total − deposit = balance; the SAME lines in both chat messages; /t only with the rx token, private headers", async () => {
+  it("TK1/TK2: ticket.pdf = every bill_line (32 columns, Courier, 80 mm); Σ = total; the SAME lines ONCE in the chat, in one row with the /t and pay links; /t only with the rx token, private headers", async () => {
     const t = await approved();
     const ticket = await t.get(t.out.ticket_url);
     expect(ticket.status).toBe(200);
@@ -194,23 +197,49 @@ describe("printable rx and account ticket (RX1, TK1–TK5)", () => {
     const text = await pdfText(ticket);
     const rows = (await env.DB.prepare("SELECT name, quantity, unit_price_cents, line_total_cents FROM bill_lines WHERE consult_id = ?1 ORDER BY id").bind(t.consult).all<{ name: string; quantity: number; unit_price_cents: number; line_total_cents: number }>()).results;
     expect(rows).toHaveLength(3);
+    // Exact 32-column strings (amounts end at column 32; no deposit → no «Anticipo» line).
     const expected = [
-      "• Consulta general ×1 $450.00 MXN = $450.00 MXN",
-      "• MED-AMOXI ×2 $125.25 MXN = $250.50 MXN",
-      "• VAC-RABIA ×1 $380.50 MXN = $380.50 MXN",
-      "Total: $1081.00 MXN",
-      "Anticipo capturado: -$0.00 MXN",
-      "Saldo pendiente: $1081.00 MXN",
+      "       FurVet demo clinic",
+      "--------------------------------",
+      "Consulta general",
+      "  1 x $450.00            $450.00",
+      "MED-AMOXI",
+      "  2 x $125.25            $250.50",
+      "VAC-RABIA",
+      "  1 x $380.50            $380.50",
+      "Total                   $1081.00",
+      "SALDO                   $1081.00",
+      "MXN",
     ];
     expect(rows.reduce((s, r) => s + r.line_total_cents, 0)).toBe(108100);
     for (const line of expected) expect(text).toContain(line);
+    expect(text).not.toContain("Anticipo");
+    expect(text).toMatch(/\(  Ticket \d{2}\/\d{2}\/\d{4} · Firulais\) Tj/);
+    // Courier at 9 pt on an 80 mm strip; the footer stays Helvetica.
+    expect(text).toContain("/BaseFont /Courier");
+    expect(text).toMatch(/\/F3 9 Tf [\d. ]+ Td \(Total {19}\$1081\.00\) Tj/);
+    expect(text).toMatch(/\/MediaBox \[0 0 226 \d+\]/);
+    expect(text).toContain("Estado: saldo pendiente");
     expect(text).not.toMatch(/paypal|ORDER-|CAP-/i);
     // The owner's name (seeded before approval) is printed on the rx only: never on the ticket, in the chat or in the logs.
     expect(await pdfText(await t.get(t.out.ticket_url))).not.toContain(OWNER);
-    // messageInserts may split a long message in 4000-char rows: compare on the JOINED text, and expect each line twice (rx + pay link).
-    const all = (await env.DB.prepare("SELECT text FROM messages WHERE conversation_id = ?1 ORDER BY id").bind(t.conv).all<{ text: string }>()).results.map((m) => m.text).join("");
-    for (const line of expected) expect(all.split(line).length - 1, line).toBe(2);
-    expect(all).toContain("Cuenta en PDF: https://furvet.test/t/");
+    // The account appears ONCE in the whole chat (approval + «Generar cobro»), inside a fenced block, in ONE row
+    // together with the /t and pay links (a 4000-char split would break the fence in sim.js).
+    const msgs = (await env.DB.prepare("SELECT text FROM messages WHERE conversation_id = ?1 ORDER BY id").bind(t.conv).all<{ text: string }>()).results.map((m) => m.text);
+    const all = msgs.join("\n");
+    for (const line of expected) expect(all.split(`\n${line}\n`).length - 1, line).toBe(line.startsWith("---") ? 2 : 1);
+    expect(all).toMatch(/\n  Ticket \d{2}\/\d{2}\/\d{4} · Firulais\n/);
+    expect(all.split("Ticket en PDF: https://furvet.test/t/").length - 1).toBe(1);
+    expect(all.split("Pagar saldo ($1081.00 MXN): https://www.sandbox.paypal.com/").length - 1).toBe(1);
+    expect(all).not.toContain("/r/"); // the report is announced only after the capture (V11)
+    const account = msgs.filter((m) => m.includes("Ticket en PDF"));
+    expect(account).toHaveLength(1);
+    expect(account[0]!.startsWith("```\n")).toBe(true);
+    expect(account[0]).toContain("\n```\nTicket en PDF: ");
+    expect(account[0]).toContain("Al pagar recibirás el informe completo.");
+    // The /t link in that row resolves (the token row landed in the same batch).
+    const chatTicket = /https:\/\/furvet\.test\/t\/[A-Za-z0-9_-]{43}/.exec(account[0]!)![0];
+    expect((await t.get(chatTicket)).status).toBe(200);
     expect(all).not.toContain(OWNER);
     expect(all).not.toContain("/rx/");
     // Other kinds and garbage: the same 404, and the token never reaches the logs.
@@ -237,14 +266,15 @@ describe("printable rx and account ticket (RX1, TK1–TK5)", () => {
     const text = await pdfText(await app.request(new URL(out.ticket_url).pathname, {}, doctorEnv()));
     const msgs = (await env.DB.prepare("SELECT text FROM messages WHERE conversation_id = ?1 ORDER BY id").bind(seeded.conv).all<{ text: string }>()).results.map((m) => m.text).join("\n");
     for (const doc of [text, msgs]) {
-      expect(doc).toContain("MED-OTRO ×14 $10.00 MXN = $140.00 MXN");
+      expect(doc).toContain("MED-OTRO");
+      expect(doc).toContain("  14 x $10.00            $140.00");
       expect(doc).not.toContain("MED-AMOXI");
     }
     expect(msgs).not.toContain("amoxicilina"); // the rx never reaches the chat
     expect(await pdfText(await app.request(`/api/v1/consults/${seeded.consult}/rx.pdf`, { headers: doctorHeaders() }, doctorEnv()))).toContain("1. amoxicilina"); // still prescribed, on paper
   });
 
-  it("TK5: deposit ≥ total → ticket and messages say «Sin saldo pendiente», never a pending balance", async () => {
+  it("TK5: deposit ≥ total → ticket and the approval message carry the account with SALDO $0.00 and the /t + /r links; the PDF footer says sin saldo pendiente", async () => {
     const seeded = await seedConsult({ depositCents: 200000 });
     const { depositCaptured } = await import("./helpers");
     await depositCaptured(seeded.appt, 200000);
@@ -256,9 +286,12 @@ describe("printable rx and account ticket (RX1, TK1–TK5)", () => {
     const text = await pdfText(await app.request(new URL(out.ticket_url).pathname, {}, doctorEnv()));
     const msgs = (await env.DB.prepare("SELECT text FROM messages WHERE conversation_id = ?1").bind(seeded.conv).all<{ text: string }>()).results.map((m) => m.text).join("");
     for (const doc of [text, msgs]) {
-      expect(doc).toContain("Sin saldo pendiente");
-      expect(doc).not.toContain("Saldo pendiente:");
+      expect(doc).toContain("Anticipo               -$2000.00");
+      expect(doc).toContain("SALDO                      $0.00");
+      expect(doc).not.toContain("saldo pendiente:");
     }
     expect(text).toContain("Estado: sin saldo pendiente");
+    expect(msgs).toContain("Ticket en PDF: https://furvet.test/t/");
+    expect(msgs).toContain("Informe completo: https://furvet.test/r/");
   });
 });
