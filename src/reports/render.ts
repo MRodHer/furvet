@@ -127,8 +127,8 @@ export function rxBlocks(body: ApprovedConsult, h: ReportHeader, d: RxDetails): 
     const name = [v(m.medicamento), v(m.concentracion), v(m.forma_farmaceutica)].filter(Boolean).join(" ");
     const how = [v(m.dosis), v(m.frecuencia), v(m.duracion), v(m.via_administracion) ? `vía ${v(m.via_administracion)}` : null].filter(Boolean).join(" · ");
     out.push({ kind: "styled", text: `${i + 1}. ${name}`, size: B, bold: true, gap: 3 });
-    if (how) out.push({ kind: "styled", text: `    ${how}`, size: B });
-    if (v(m.indicaciones)) out.push({ kind: "styled", text: `    Indicaciones: ${v(m.indicaciones)}`, size: B });
+    if (how) out.push({ kind: "styled", text: how, size: B, indent: 4 });
+    if (v(m.indicaciones)) out.push({ kind: "styled", text: `Indicaciones: ${v(m.indicaciones)}`, size: B, indent: 4 });
   });
   const urgent = urgentLines(body);
   if (urgent.length) {
@@ -142,9 +142,9 @@ export function rxBlocks(body: ApprovedConsult, h: ReportHeader, d: RxDetails): 
   // lines with open space below each (wrapText collapses runs of spaces, so a single line leaves no room to stamp).
   out.push(
     { kind: "styled", text: "Fecha de revisión: ____ / ____ / ________", size: B, gap: 2 },
-    { kind: "styled", text: "Firma: ______________________________", size: B, gap: 14 },
-    { kind: "styled", text: "Sello:", size: B, gap: 20 },
-    { kind: "styled", text: `${h.doctorName} · ${h.licenseLabel}`, size: B, gap: 26 },
+    { kind: "styled", text: "Firma: ______________________________", size: B, gap: 8 },
+    { kind: "styled", text: "Sello:", size: B, gap: 12 },
+    { kind: "styled", text: `${h.doctorName} · ${h.licenseLabel}`, size: B, gap: 14 },
   );
   out.push({ kind: "styled", text: "Original para el médico: imprimir, firmar y entregar.", size: F, gap: 4 });
   out.push({ kind: "styled", text: `Contenido clínico revisado y aprobado por el médico el ${h.approvedAt.slice(0, 10)}, con asistencia de IA. No sustituye la atención presencial.`, size: F, gap: 2 });

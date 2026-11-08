@@ -7,7 +7,7 @@ import { pngIdat, type CleanImage } from "../images";
 
 export type Block =
   | { kind: "h1" | "h2" | "p" | "small"; text: string }
-  | { kind: "styled"; text: string; size: number; bold?: boolean; gap?: number } // explicit size/weight: the caller owns its hierarchy
+  | { kind: "styled"; text: string; size: number; bold?: boolean; gap?: number; indent?: number } // explicit size/weight; indent in spaces, kept in the literal
   | { kind: "cols"; left: string; right: string; size: number } // two columns at fixed x (a simple table row)
   | { kind: "rule" } // thin full-width horizontal divider
   | { kind: "image"; image: CleanImage; caption: string };
@@ -58,12 +58,14 @@ export function buildPdf(blocks: Block[], page: { w: number; h: number; margin: 
   for (const b of blocks) {
     if (b.kind === "styled") {
       if (b.gap) y -= b.gap;
-      const leading = Math.round(b.size * 1.32);
-      for (const l of wrapText(b.text, approxFont, b.size, TEXT_W, 200)) line(l, b.size, b.bold ? 2 : 1, leading);
+      const leading = Math.round(b.size * 1.26);
+      const pad = b.indent ? " ".repeat(b.indent) : ""; // leading spaces survive into the PDF literal (wrapText would strip them)
+      const w = TEXT_W - (b.indent ? b.indent * 0.55 * b.size : 0);
+      for (const l of wrapText(b.text, approxFont, b.size, w, 200)) line(pad + l, b.size, b.bold ? 2 : 1, leading);
       continue;
     }
     if (b.kind === "cols") {
-      const leading = Math.round(b.size * 1.32);
+      const leading = Math.round(b.size * 1.26);
       if (y - leading < MARGIN) newPage();
       y -= leading;
       const midX = MARGIN + TEXT_W / 2;
