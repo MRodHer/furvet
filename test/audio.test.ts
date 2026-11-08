@@ -115,6 +115,18 @@ describe("audio upload (V1, V2, V3, V19) — strict order 503 → 409 → 413 �
     expect(await count("transcript_segments", "consult_id IN (?1, ?2)", noOwner.id, noDoctor.id)).toBe(0);
   });
 
+  it("m3: an owner consent given in the chat AFTER the consult opened unblocks recording (consult snapshot syncs from the conversation; first copy wins)", async () => {
+    const { ai } = fakeAi();
+    const { app } = makeApp({});
+    const e = withEnv({ AI: ai });
+    const { id, conv } = await createConsult(app, e, { ownerConsent: false });
+    expect((await upload(app, id, audioBody("x"), e)).status).toBe(409); // the owner had not consented when the consult opened
+    await env.DB.prepare("UPDATE conversations SET owner_consent_at = '2026-11-05T09:00:00.000Z', owner_consent_version = 'v1-2026-11-04' WHERE id = ?1").bind(conv).run();
+    expect((await upload(app, id, audioBody("x"), e)).status).toBe(200); // now it is picked up and recording proceeds
+    const row = await env.DB.prepare("SELECT owner_consent_at FROM consults WHERE id = ?1").bind(id).first<{ owner_consent_at: string | null }>();
+    expect(row?.owner_consent_at).toBeTruthy(); // the snapshot was filled once, from the conversation
+  });
+
   it("V3: no AI binding → 503 before anything else (even without consent)", async () => {
     const { app } = makeApp({});
     const e = withEnv({ AI: undefined });

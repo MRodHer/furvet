@@ -303,4 +303,6 @@ run_mutant "/approve drops the state gate: AI leaves accepted on a never-transcr
   's/hasAiLeaf(body) && consult.status/false \&\& consult.status/' test/approve.test.ts || status=1
 run_mutant "explanation dose units narrowed again: «12 pastillas» passes unchecked against the rx (audit M3)" src/reports/explain.ts \
   's/|pastillas?//' test/explain.test.ts || status=1
+run_mutant "/audio stops syncing a late owner consent: recording stays blocked forever (audit m3)" src/routes/consults.ts \
+  's/await syncOwnerConsent(env, id.data);//' test/audio.test.ts || status=1
 exit $status
