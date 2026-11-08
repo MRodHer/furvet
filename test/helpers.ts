@@ -199,6 +199,7 @@ export async function seedConsult(opts: { depositCents?: number; prices?: Record
   ]);
   const { results } = await env.DB.prepare("SELECT id, sku FROM catalog_items").all<{ id: string; sku: string }>();
   const ids = Object.fromEntries(results.map((r) => [r.sku, r.id]));
+  await seedSubscription(); // a clinic using the console is subscribed; the model gate (m4) is satisfied on the happy path
   return { ...booking, consult, ids };
 }
 

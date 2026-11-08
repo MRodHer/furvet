@@ -14,7 +14,7 @@ import { sniffAudio, transcribe, TranscribeError, WHISPER_MODEL } from "../clini
 import type { Deps, Env } from "../env";
 import { intVar } from "../env";
 import { errName, log } from "../log";
-import { isSubscriptionActive, subscriptionRequired } from "../subscription";
+import { aiGate } from "../subscription";
 
 export const DOCTOR_CONSENT_VERSION = "doctor-v1-2026-11-04";
 const AUDIO_BYTES_PER_SECOND = 4000; // 32 kbps, the console's recorder setting
@@ -202,7 +202,9 @@ export function consultsRoutes(deps: Deps) {
     // (7) roles by content; unlabeled is a visible state, reported in the response
     let labels = new Map<number, Speaker>();
     let labeled = false;
-    if (env.ANTHROPIC_API_KEY && result.segments.length > 0) {
+    // m4: speaker labeling calls the model, so it goes through the same subscription gate; no subscription ⇒
+    // segments are stored unlabeled ('unknown', a visible state), the transcription itself is never blocked.
+    if (env.ANTHROPIC_API_KEY && result.segments.length > 0 && (await aiGate(env)) === "ok") {
       try {
         const owner = await ownerOf(env, consult.appointment_id);
         labels = await labelSpeakers(deps.fetch, env.ANTHROPIC_API_KEY, result.segments.map((s) => ({ idx: s.idx, text: redactOwner(s.text, owner) })));
@@ -245,19 +247,12 @@ export function consultsRoutes(deps: Deps) {
   app.post("/:id/fill", async (c) => {
     const env = c.env;
     if (!env.ANTHROPIC_API_KEY) return c.json({ error: "model not configured" }, 503);
-    // The clinic pays for the AI: no active subscription, no call to the model. Store down ⇒ deny.
-    if (subscriptionRequired(env)) {
-      let active: boolean;
-      try {
-        active = await isSubscriptionActive(env);
-      } catch (e) {
-        log("subscription_check_failed", { error: errName(e) });
-        return c.json({ error: "subscription check unavailable" }, 503);
-      }
-      if (!active) {
-        log("subscription_required_denied", { route: c.req.routePath });
-        return c.json({ error: "subscription_required" }, 402);
-      }
+    // The clinic pays for the AI: no active subscription, no call to the model. Store down ⇒ deny (m4 shares aiGate).
+    const gate = await aiGate(env);
+    if (gate === "error") return c.json({ error: "subscription check unavailable" }, 503);
+    if (gate === "required") {
+      log("subscription_required_denied", { route: c.req.routePath });
+      return c.json({ error: "subscription_required" }, 402);
     }
     const id = Id.safeParse(c.req.param("id"));
     if (!id.success) return c.json({ error: "invalid id" }, 400);

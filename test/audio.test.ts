@@ -1,7 +1,7 @@
 import { env } from "cloudflare:test";
 import { afterEach, describe, expect, it } from "vitest";
 import type { Env } from "../src/env";
-import { assertNoPii, captureLogs, count, DOCTOR_AUTH, json, makeApp, PP, seedConfirmed, withEnv } from "./helpers";
+import { assertNoPii, captureLogs, count, DOCTOR_AUTH, json, makeApp, PP, seedConfirmed, seedSubscription, withEnv } from "./helpers";
 
 const WEBM = [0x1a, 0x45, 0xdf, 0xa3];
 const toolUse = (name: string, input: unknown) => ({ stop_reason: "tool_use", content: [{ type: "tool_use", id: "tu-1", name, input }] });
@@ -65,6 +65,7 @@ describe("audio upload (V1, V2, V3, V19) — strict order 503 → 409 → 413 �
     const { app, count: fetchCalls, calls: fetches } = makeApp({ [PP.claude]: () => json(toolUse("label_speakers", { labels: [{ idx: 0, speaker: "doctor" }, { idx: 1, speaker: "owner" }] })) });
     const e = withEnv({ AI: ai });
     const { id } = await createConsult(app, e);
+    await seedSubscription(); // m4: speaker labeling (a model call) needs an active subscription
     const logs = captureLogs();
     restore = logs.restore;
     const res = await upload(app, id, audioBody(marker), e);
@@ -99,6 +100,19 @@ describe("audio upload (V1, V2, V3, V19) — strict order 503 → 409 → 413 �
     // A second upload for the same consult is refused before the provider is touched.
     expect((await upload(app, id, audioBody(marker), e)).status).toBe(409);
     expect(calls).toHaveLength(1);
+  });
+
+  it("m4: without an active subscription the audio is still transcribed, but speaker labeling (a model call) is skipped — segments stay 'unknown', the model is never called", async () => {
+    const { ai } = fakeAi({ text: "x", segments: [{ start: 0, end: 2, text: "hola" }] });
+    const { app, count: fetchCalls } = makeApp({ [PP.claude]: () => json(toolUse("label_speakers", { labels: [{ idx: 0, speaker: "doctor" }] })) });
+    const e = withEnv({ AI: ai });
+    const { id } = await createConsult(app, e);
+    await seedSubscription("cancelled"); // the clinic has no active subscription → the AI gate is 'required'
+    const res = await upload(app, id, audioBody("x"), e);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ labeled: false });
+    expect(fetchCalls(PP.claude)).toBe(0); // speaker labeling never reached the model
+    expect(await env.DB.prepare("SELECT speaker FROM transcript_segments WHERE consult_id = ?1").bind(id).first()).toEqual({ speaker: "unknown" });
   });
 
   it("V1: owner consent missing → 409; doctor consent missing → 409; provider called 0 times", async () => {

@@ -12,6 +12,7 @@ import { buildLines, computeBill, BillingError, type Bill, type BillLine, type C
 import { ApprovedConsult } from "../clinical/schema";
 import { incompleteMedications, validateGrounding } from "../clinical/grounding";
 import { redactOwner } from "../clinical/redact";
+import { aiGate } from "../subscription";
 import { MESSAGE_MAX, messageInserts, newToken, tokenInsert } from "../delivery";
 import { intVar, type Deps, type Env } from "../env";
 import { cleanImage, ImageError, MAX_IMAGE_BYTES, type CleanImage } from "../images";
@@ -233,7 +234,10 @@ export function approveRoutes(deps: Deps, paypalFor: (env: Env) => PayPalClient 
 
     // Content first (slow calls), then ONE atomic batch. A lost race leaves orphan R2 objects
     // under an approval_id nobody references — harmless. The explanation is stored, not sent.
-    const explanation = await plainExplanation(deps.fetch, env.ANTHROPIC_API_KEY, body, consult.id);
+    // m4: the owner explanation calls the model, so it goes through the subscription gate too; no active
+    // subscription ⇒ the fixed template (no AI), the approval itself never blocked.
+    const aiKey = (await aiGate(env)) === "ok" ? env.ANTHROPIC_API_KEY : undefined;
+    const explanation = await plainExplanation(deps.fetch, aiKey, body, consult.id);
     // Second barrier before the column CHECK: a visible refusal, never a 500 from the batch.
     if (explanation.text.length > MAX_EXPLANATION_CHARS) return c.json({ error: "explanation too long" }, 422);
     const header = await putReport(env, consult, approvalId, body, null, explanation.source === "ai", now.toISOString());

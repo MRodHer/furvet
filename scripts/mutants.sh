@@ -168,9 +168,9 @@ run_mutant "a sale resurrects a cancelled subscription" src/subscription.ts \
 run_mutant "SUBSCRIPTION_REQUIRED default flips to OFF" src/subscription.ts \
   's/return env.SUBSCRIPTION_REQUIRED !== "false";/return env.SUBSCRIPTION_REQUIRED === "true";/' test/subscription.test.ts || status=1
 run_mutant "AI gate removed from /fill" src/routes/consults.ts \
-  's/if (subscriptionRequired(env)) {/if (false) {/' test/subscription.test.ts || status=1
+  's/if (gate === "required") {/if (false) {/' test/subscription.test.ts || status=1
 run_mutant "AI gate passes when the subscription store fails" src/routes/consults.ts \
-  's/return c.json({ error: "subscription check unavailable" }, 503);/active = true;/' test/subscription.test.ts || status=1
+  's/if (gate === "error") return c.json({ error: "subscription check unavailable" }, 503);//' test/subscription.test.ts || status=1
 run_mutant "/start body accepts extra keys (plan_id from the client)" src/routes/subscription.ts \
   's/const StartBody = z.object({}).strict();/const StartBody = z.object({});/' test/subscription.test.ts || status=1
 run_mutant "approve link checked by protocol only (look-alike host passes)" src/routes/subscription.ts \
@@ -305,4 +305,8 @@ run_mutant "explanation dose units narrowed again: «12 pastillas» passes unche
   's/|pastillas?//' test/explain.test.ts || status=1
 run_mutant "/audio stops syncing a late owner consent: recording stays blocked forever (audit m3)" src/routes/consults.ts \
   's/await syncOwnerConsent(env, id.data);//' test/audio.test.ts || status=1
+run_mutant "/approve calls the model without the subscription gate (cost leak) (audit m4)" src/routes/approve.ts \
+  's/(await aiGate(env)) === "ok" ? env.ANTHROPIC_API_KEY : undefined/env.ANTHROPIC_API_KEY/' test/approve.test.ts || status=1
+run_mutant "/audio labels speakers without the subscription gate (cost leak) (audit m4)" src/routes/consults.ts \
+  's/ && (await aiGate(env)) === "ok"//' test/audio.test.ts || status=1
 exit $status

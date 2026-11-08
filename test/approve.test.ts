@@ -2,7 +2,7 @@ import { env } from "cloudflare:test";
 import { afterEach, describe, expect, it } from "vitest";
 import { ApprovedConsult, ConsultDraft, FILL_CONSULT_TOOL } from "../src/clinical/schema";
 import { makePayPal, PayPalError } from "../src/paypal";
-import { ai, approvedBody, assertNoPii, captureLogs, claudeToolFake, count, depositCaptured, doctorEnv, doctorHeaders, makeApp, paypalFakes, PP, seedConsult, SEG1, uniqueOrderFake, withEnv } from "./helpers";
+import { ai, approvedBody, assertNoPii, captureLogs, claudeToolFake, count, depositCaptured, doctorEnv, doctorHeaders, makeApp, paypalFakes, PP, seedConsult, seedSubscription, SEG1, uniqueOrderFake, withEnv } from "./helpers";
 
 const fakes = () => ({ ...paypalFakes(), ...uniqueOrderFake, ...claudeToolFake(["Su perro tiene gastroenteritis leve; amoxicilina 250 mg cada 12 h por 7 días."]) });
 const post = (app: ReturnType<typeof makeApp>["app"], consult: string, body: unknown, e = doctorEnv(), headers: Record<string, string> = doctorHeaders({ "Content-Type": "application/json" })) =>
@@ -565,6 +565,18 @@ describe("server-side AI re-anchor + state gate (audit M2)", () => {
     expect((await post(app, consult, approvedBody(ids))).status).toBe(409); // has ai leaves, not transcribed
     const manual = { subjective: {}, vitals: {}, physical_exam: {}, assessment: {}, plan: {}, prescription: [], vaccines: [], billable: [] };
     expect((await post(app, consult, manual)).status).toBe(201); // 0 ai leaves → allowed in any state
+  });
+});
+
+describe("AI cost gate on /approve (audit m4)", () => {
+  it("m4: without an active subscription the approval still goes through, but the owner explanation is the fixed template and the model is never called", async () => {
+    const { consult, ids } = await seedConsult();
+    await seedSubscription("cancelled"); // the clinic's subscription lapsed
+    const { app, calls } = makeApp(fakes());
+    const res = await post(app, consult, approvedBody(ids));
+    expect(res.status).toBe(201);
+    expect(await res.json()).toMatchObject({ explanation_source: "template" });
+    expect(calls.filter((c) => c.key === PP.claude)).toHaveLength(0); // no model call for the explanation
   });
 });
 
