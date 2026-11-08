@@ -122,6 +122,9 @@
     $("recCard").classList.remove("hidden");
     // Both layers, or the button stays off (the server refuses anyway: 409).
     $("recBtn").disabled = !(consult.owner_consent_at && doctorDone && consult.status === "recording");
+    // Persistent and true: the audio is never stored (migrations/0002 line 2, transcribe.ts line 3). Once the
+    // consult has a transcription, say so on every load — the live "Listo" would otherwise vanish on reload.
+    if (consult.transcribed_at) $("recLabel").textContent = `✓ Audio borrado y transcrito · ${clinicTime(consult.transcribed_at)}`;
     const hasTranscript = data.segments.length > 0;
     $("work").classList.toggle("hidden", !hasTranscript);
     if (hasTranscript) { renderTranscript(data.segments); renderDraft(data.draft); }

@@ -54,6 +54,15 @@ describe("console: automatic AI draft after transcription (encargo fix-movil ít
   });
 });
 
+describe("console: persistent «audio borrado» label (encargo fix-audio-borrado-label)", () => {
+  it("AB1: once a consult carries transcribed_at the recording label says audio deleted + transcribed, with the clinic-zone time, on every load (pin on the served script; audio truly deleted per migrations/0002 line 2 and transcribe.ts line 3)", async () => {
+    const js = await (await env.ASSETS.fetch(new Request("https://furvet.test/console.js"))).text();
+    // Derived from server state, not a transient post-recording flag: survives reload because refresh() sets it.
+    expect(js).toContain("if (consult.transcribed_at) $(\"recLabel\").textContent = `✓ Audio borrado y transcrito · ${clinicTime(consult.transcribed_at)}`;");
+    expect(js).toContain("new Intl.DateTimeFormat(\"es-MX\", { timeZone: \"America/Mexico_City\""); // the clinic zone, not the viewer's
+  });
+});
+
 describe("console: collapsible cards for the phone (encargo fix-consola-secciones-plegables)", () => {
   it("CF1: every card is a <details open> whose title is its <summary><h2>; the recording state lives in the summary", async () => {
     const { app } = makeApp({});

@@ -214,4 +214,6 @@ run_mutant "sim.js renders fenced blocks as plain text (no <pre>)" public/sim.js
   's/const pre = document.createElement("pre");/const pre = document.createElement("span");/' test/ticket.test.ts || status=1
 run_mutant "console folds cards on a desktop too (narrow gate removed)" public/console.js \
   's/if (!narrow.matches) return;/if (false) return;/' test/console_auth.test.ts || status=1
+run_mutant "«audio borrado» label shows the raw UTC instant, not the clinic zone (fix-audio-borrado-label)" public/console.js \
+  's/Audio borrado y transcrito · \${clinicTime(consult.transcribed_at)}/Audio borrado y transcrito · \${consult.transcribed_at}/' test/console_auth.test.ts || status=1
 exit $status
