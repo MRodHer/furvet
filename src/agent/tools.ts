@@ -152,7 +152,8 @@ export async function executeTool(ctx: ToolContext, name: string, input: unknown
 const STALE_PENDING_MS = 3 * 60 * 60 * 1000; // a PayPal order approval window; after that an unpaid booking is abandoned
 
 /**
- * Lazy release (no cron, money audit M3): a deposit unpaid for ≥ 3 h and never captured cancels its
+ * Lazy release (no cron, money audit M3): a deposit unpaid for ≥ 3 h with no money moved and no approval in flight (no captured, capture_failed or
+ * amount_mismatch event) cancels its
  * appointment and frees the real slot. appointments.slot_id is UNIQUE, so the cancelled row moves to its
  * own tombstone slot `released-<appointment id>` (starts_at = booking time, taken = 1: never listed, never
  * claimable, and not a UUID so book_appointment rejects it at the schema). Runs before every list and claim.
@@ -161,7 +162,7 @@ async function releaseStale(ctx: ToolContext): Promise<void> {
   const now = ctx.deps.now();
   const stale = new Date(now.getTime() - STALE_PENDING_MS).toISOString();
   const abandoned =
-    "FROM appointments a WHERE a.status = 'pending_deposit' AND a.created_at < ?1 AND NOT EXISTS (SELECT 1 FROM charges_current c WHERE c.appointment_id = a.id AND c.status = 'captured')";
+    "FROM appointments a WHERE a.status = 'pending_deposit' AND a.created_at < ?1 AND NOT EXISTS (SELECT 1 FROM charges_current c WHERE c.appointment_id = a.id AND c.status IN ('captured', 'capture_failed', 'amount_mismatch'))";
   await ctx.env.DB.batch([
     ctx.env.DB.prepare(`UPDATE slots SET taken = 0 WHERE id IN (SELECT a.slot_id ${abandoned})`).bind(stale),
     ctx.env.DB.prepare(`INSERT OR IGNORE INTO slots (id, starts_at, taken) SELECT 'released-' || a.id, a.created_at, 1 ${abandoned}`).bind(stale),
@@ -186,7 +187,7 @@ async function bookAppointment(ctx: ToolContext, p: z.infer<typeof BookAppointme
   const appointmentId = crypto.randomUUID();
   const now = ctx.deps.now();
   const birthDate = approxBirthDate(now, p.age_years, p.age_months);
-  await releaseStale(ctx);
+  await releaseStale(ctx); // a direct booking (no list_slots before) must see abandoned slots too
   // One unpaid appointment per chat: a booking while one is pending MOVES it (the owner picked another
   // hour, or the model re-sent the call) instead of leaving a second pending row and an orphaned slot.
   const pending = await ctx.env.DB.prepare("SELECT id, slot_id FROM appointments WHERE conversation_id = ?1 AND status = 'pending_deposit' LIMIT 1")

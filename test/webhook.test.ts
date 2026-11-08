@@ -213,6 +213,16 @@ describe("PayPal webhook (E1-E4, E6, E14, D.1)", () => {
     assertNoPii(logs.lines);
   });
 
+  it("m2: a normal capture (appointment confirmed by this batch) writes no deposit_captured_late line", async () => {
+    const { chargeId, orderId, apptStatus } = await seedDeposit();
+    const logs = captureLogs();
+    restore = logs.restore;
+    const { app } = makeApp(paypalFakes());
+    expect(await (await post(app, captureCompletedEvent("WH-M3b", "CAP-M3b", chargeId, "200.00", "MXN", orderId))).json()).toEqual({ status: "captured" });
+    expect(await apptStatus()).toBe("confirmed");
+    expect(logs.lines.filter((l) => l.includes("deposit_captured_late"))).toHaveLength(0);
+  });
+
   describe("M1: captured is terminal (a late DENIED never un-pays a charge)", () => {
     const denied = (id: string, captureId: string, customId: string, orderId: string) => ({
       ...captureCompletedEvent(id, captureId, customId, "200.00", "MXN", orderId),

@@ -385,17 +385,42 @@ describe("booking + deposit tools (E7, E8, E9, V17)", () => {
       expect((await appt(a.appt))?.status).toBe("pending_deposit");
     });
 
-    it("a deposit captured late (appointment still pending_deposit) is never released, whatever its age", async () => {
-      const a = await pendingAgedBy(30 * H);
+    async function withDepositEvent(a: { appt: string; conv: string }, status: string) {
       const chargeId = crypto.randomUUID();
       await env.DB.batch([
         env.DB.prepare("INSERT INTO charges (id, kind, appointment_id, conversation_id, paypal_order_id, paypal_request_id, amount_cents, currency, approve_url) VALUES (?1, 'deposit', ?2, ?3, ?4, ?5, 20000, 'MXN', 'https://www.sandbox.paypal.com/x')").bind(chargeId, a.appt, a.conv, `ORDER-${chargeId}`, `deposit-${a.appt}`),
-        env.DB.prepare("INSERT INTO charge_events (charge_id, status, paypal_event_id, paypal_capture_id, amount_cents, currency, raw) VALUES (?1, 'captured', ?2, ?3, 20000, 'MXN', '{}')").bind(chargeId, `WH-${chargeId}`, `CAP-${chargeId}`),
+        env.DB.prepare("INSERT INTO charge_events (charge_id, status, paypal_event_id, paypal_capture_id, amount_cents, currency, raw) VALUES (?1, ?2, ?3, ?4, 20000, 'MXN', '{}')").bind(chargeId, status, `WH-${chargeId}`, `CAP-${chargeId}`),
       ]);
+    }
+
+    // «Abandoned» = no money moved and no approval in flight. captured: paid. capture_failed: the owner approved and
+    // PayPal keeps retrying the event for days. amount_mismatch: funds were captured with another amount.
+    for (const status of ["captured", "capture_failed", "amount_mismatch"]) {
+      it(`a booking whose deposit is ${status} is never released, whatever its age (30 h)`, async () => {
+        const a = await pendingAgedBy(30 * H);
+        await withDepositEvent(a, status);
+        const b = await other();
+        expect(await executeTool(ctx(b), "list_slots", {})).not.toContain(a.slot);
+        expect(await executeTool(ctx(b), "book_appointment", { slot_id: a.slot, pet_name: "Luna", species: "gato" })).toMatch(/ya se ocupó/);
+        expect(await appt(a.appt)).toEqual({ status: "pending_deposit", slot_id: a.slot });
+        expect((await slot(a.slot))?.taken).toBe(1);
+      });
+    }
+
+    it("a booking whose deposit order was only created (no money, nothing in flight) IS released at 4 h", async () => {
+      const a = await pendingAgedBy(4 * H);
+      await withDepositEvent(a, "created");
+      await executeTool(ctx(await other()), "list_slots", {});
+      expect((await appt(a.appt))?.status).toBe("cancelled");
+      expect((await slot(a.slot))?.taken).toBe(0);
+    });
+
+    it("m1: book_appointment alone (no list_slots before) claims a slot abandoned 4 h ago", async () => {
+      const a = await pendingAgedBy(4 * H);
       const b = await other();
-      expect(await executeTool(ctx(b), "list_slots", {})).not.toContain(a.slot);
-      expect(await appt(a.appt)).toEqual({ status: "pending_deposit", slot_id: a.slot });
-      expect((await slot(a.slot))?.taken).toBe(1);
+      expect(await executeTool(ctx(b), "book_appointment", { slot_id: a.slot, pet_name: "Luna", species: "gato" })).toMatch(/appointment_id/);
+      expect(await appt(a.appt)).toEqual({ status: "cancelled", slot_id: `released-${a.appt}` });
+      expect(await count("appointments", "slot_id = ?1 AND conversation_id = ?2", a.slot, b)).toBe(1);
     });
 
     it("prod shape (the 4 orphans): one chat, 4 pending bookings on 4 slots with uncaptured deposit orders, 5 h old → all 4 released by one list_slots", async () => {
