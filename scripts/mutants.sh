@@ -236,6 +236,24 @@ run_mutant "re-sent lookup ignores the slot (returns a confirmed appointment on 
   's/SELECT id FROM appointments WHERE slot_id = ?1 AND conversation_id = ?2/SELECT id FROM appointments WHERE ?1 = ?1 AND conversation_id = ?2/' test/booking.test.ts || status=1
 run_mutant "«audio borrado» label shows the raw UTC instant, not the clinic zone (fix-audio-borrado-label)" public/console.js \
   's/Audio borrado y transcrito · \${clinicTime(consult.transcribed_at)}/Audio borrado y transcrito · \${consult.transcribed_at}/' test/console_auth.test.ts || status=1
+run_mutant "lazy release ignores the 3 h window (fresh unpaid bookings cancelled)" src/agent/tools.ts \
+  "s/a.status = 'pending_deposit' AND a.created_at < ?1 AND NOT EXISTS/a.status = 'pending_deposit' AND ?1 = ?1 AND NOT EXISTS/" test/booking.test.ts || status=1
+run_mutant "lazy release ignores the ledger (money guard removed)" src/agent/tools.ts \
+  "s/AND NOT EXISTS (SELECT 1 FROM charges_current c WHERE c.appointment_id = a.id AND c.status IN ('captured', 'capture_failed', 'amount_mismatch'))/AND 1 = 1/" test/booking.test.ts || status=1
+run_mutant "lazy release frees a booking whose deposit was captured" src/agent/tools.ts \
+  "s/c.status IN ('captured', 'capture_failed', 'amount_mismatch')/c.status IN ('capture_failed', 'amount_mismatch')/" test/booking.test.ts || status=1
+run_mutant "lazy release frees a booking whose capture is being retried by PayPal (capture_failed)" src/agent/tools.ts \
+  "s/c.status IN ('captured', 'capture_failed', 'amount_mismatch')/c.status IN ('captured', 'amount_mismatch')/" test/booking.test.ts || status=1
+run_mutant "lazy release frees a booking whose deposit was captured with another amount" src/agent/tools.ts \
+  "s/c.status IN ('captured', 'capture_failed', 'amount_mismatch')/c.status IN ('captured', 'capture_failed')/" test/booking.test.ts || status=1
+run_mutant "release only runs from list_slots (a direct booking still hits «ya se ocupó»)" src/agent/tools.ts \
+  's|await releaseStale(ctx); // a direct booking (no list_slots before) must see abandoned slots too|void ctx;|' test/booking.test.ts || status=1
+run_mutant "late-deposit log fires on every capture (condition removed)" src/routes/webhook.ts \
+  's/if (appt \&\& appt.status !== "confirmed") log("deposit_captured_late"/if (appt) log("deposit_captured_late"/' test/webhook.test.ts || status=1
+run_mutant "lazy release cancels the booking but never frees the real slot" src/agent/tools.ts \
+  's/UPDATE slots SET taken = 0 WHERE id IN (SELECT a.slot_id/UPDATE slots SET taken = 0 WHERE 0 AND id IN (SELECT a.slot_id/' test/booking.test.ts || status=1
+run_mutant "late deposit capture no longer logged" src/routes/webhook.ts \
+  's/if (appt \&\& appt.status !== "confirmed") log("deposit_captured_late"/if (appt \&\& appt.status === "confirmed") log("deposit_captured_late"/' test/webhook.test.ts || status=1
 run_mutant "webhook: a late DENIED after captured is recorded again (captured-is-terminal guard limited to COMPLETED)" src/routes/webhook.ts \
   's/if (charge.status === "captured") {/if (charge.status === "captured" \&\& event.event_type === "PAYMENT.CAPTURE.COMPLETED") {/' test/webhook.test.ts || status=1
 run_mutant "charges_current takes the last event again (0006 view without captured-first order)" migrations/0006_captured_is_terminal.sql \

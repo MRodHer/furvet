@@ -197,6 +197,32 @@ describe("PayPal webhook (E1-E4, E6, E14, D.1)", () => {
     expect(await events("status = 'captured'")).toBe(0);
   });
 
+  it("M3: a deposit captured for a cancelled (lazily released) appointment is logged as late, confirms nothing and says nothing", async () => {
+    const { chargeId, orderId, apptStatus, appt, botMsgs } = await seedDeposit();
+    await env.DB.prepare("UPDATE appointments SET status = 'cancelled' WHERE id = ?1").bind(appt).run();
+    const logs = captureLogs();
+    restore = logs.restore;
+    const { app } = makeApp(paypalFakes());
+    expect(await (await post(app, captureCompletedEvent("WH-M3", "CAP-M3", chargeId, "200.00", "MXN", orderId))).json()).toEqual({ status: "captured" });
+    expect(await apptStatus()).toBe("cancelled");
+    expect(await botMsgs()).toBe(0);
+    const late = logs.lines.filter((l) => l.includes("deposit_captured_late"));
+    expect(late).toHaveLength(1);
+    expect(late[0]).toContain(chargeId);
+    expect(late[0]).toContain('"appointment_status":"cancelled"');
+    assertNoPii(logs.lines);
+  });
+
+  it("m2: a normal capture (appointment confirmed by this batch) writes no deposit_captured_late line", async () => {
+    const { chargeId, orderId, apptStatus } = await seedDeposit();
+    const logs = captureLogs();
+    restore = logs.restore;
+    const { app } = makeApp(paypalFakes());
+    expect(await (await post(app, captureCompletedEvent("WH-M3b", "CAP-M3b", chargeId, "200.00", "MXN", orderId))).json()).toEqual({ status: "captured" });
+    expect(await apptStatus()).toBe("confirmed");
+    expect(logs.lines.filter((l) => l.includes("deposit_captured_late"))).toHaveLength(0);
+  });
+
   describe("M1: captured is terminal (a late DENIED never un-pays a charge)", () => {
     const denied = (id: string, captureId: string, customId: string, orderId: string) => ({
       ...captureCompletedEvent(id, captureId, customId, "200.00", "MXN", orderId),

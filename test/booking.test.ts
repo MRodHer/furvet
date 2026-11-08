@@ -344,6 +344,121 @@ describe("booking + deposit tools (E7, E8, E9, V17)", () => {
     expect(out).not.toContain(`taken-${conv}`);
   });
 
+  describe("M3: lazy release of abandoned bookings (pending_deposit ≥ 3 h, never captured)", () => {
+    const H = 60 * 60 * 1000;
+    async function pendingAgedBy(ms: number, slotStartsAt = "2026-11-10T16:00:00.000Z") {
+      const conv = crypto.randomUUID();
+      const slot = crypto.randomUUID();
+      await env.DB.batch([
+        env.DB.prepare("INSERT INTO contacts (id) VALUES (?1)").bind(conv),
+        env.DB.prepare("INSERT INTO conversations (id, contact_id) VALUES (?1, ?1)").bind(conv),
+        env.DB.prepare("INSERT INTO slots (id, starts_at) VALUES (?1, ?2)").bind(slot, slotStartsAt),
+      ]);
+      const out = await executeTool(ctx(conv), "book_appointment", { slot_id: slot, pet_name: "Firulais", species: "perro" });
+      const appt = /appointment_id: ([0-9a-f-]{36})/.exec(out)![1]!;
+      await env.DB.prepare("UPDATE appointments SET created_at = ?1 WHERE id = ?2").bind(new Date(NOW.getTime() - ms).toISOString(), appt).run();
+      return { conv, slot, appt };
+    }
+    const appt = (id: string) => env.DB.prepare("SELECT status, slot_id FROM appointments WHERE id = ?1").bind(id).first<{ status: string; slot_id: string }>();
+    const slot = (id: string) => env.DB.prepare("SELECT taken, starts_at FROM slots WHERE id = ?1").bind(id).first<{ taken: number; starts_at: string }>();
+    const other = () => { const c = crypto.randomUUID(); return env.DB.batch([env.DB.prepare("INSERT INTO contacts (id) VALUES (?1)").bind(c), env.DB.prepare("INSERT INTO conversations (id, contact_id) VALUES (?1, ?1)").bind(c)]).then(() => c); };
+
+    it("≥ 3 h unpaid → list_slots shows the slot again, another chat books it; the old booking is cancelled on its tombstone", async () => {
+      const a = await pendingAgedBy(4 * H);
+      const b = await other();
+      expect(await executeTool(ctx(b), "list_slots", {})).toContain(a.slot);
+      const out = await executeTool(ctx(b), "book_appointment", { slot_id: a.slot, pet_name: "Luna", species: "gato" });
+      expect(out).toMatch(/appointment_id/);
+      expect(await appt(a.appt)).toEqual({ status: "cancelled", slot_id: `released-${a.appt}` });
+      expect((await slot(a.slot))?.taken).toBe(1); // taken again, by B
+      expect(await count("appointments", "slot_id = ?1", a.slot)).toBe(1);
+      const tomb = await slot(`released-${a.appt}`);
+      expect(tomb?.taken).toBe(1);
+      expect(Date.parse(tomb!.starts_at)).toBeLessThan(NOW.getTime());
+    });
+
+    it("< 3 h unpaid → nothing is released (list hides it, another chat gets «ya se ocupó»)", async () => {
+      const a = await pendingAgedBy(2 * H);
+      const b = await other();
+      expect(await executeTool(ctx(b), "list_slots", {})).not.toContain(a.slot);
+      expect(await executeTool(ctx(b), "book_appointment", { slot_id: a.slot, pet_name: "Luna", species: "gato" })).toMatch(/ya se ocupó/);
+      expect((await appt(a.appt))?.status).toBe("pending_deposit");
+    });
+
+    async function withDepositEvent(a: { appt: string; conv: string }, status: string) {
+      const chargeId = crypto.randomUUID();
+      await env.DB.batch([
+        env.DB.prepare("INSERT INTO charges (id, kind, appointment_id, conversation_id, paypal_order_id, paypal_request_id, amount_cents, currency, approve_url) VALUES (?1, 'deposit', ?2, ?3, ?4, ?5, 20000, 'MXN', 'https://www.sandbox.paypal.com/x')").bind(chargeId, a.appt, a.conv, `ORDER-${chargeId}`, `deposit-${a.appt}`),
+        env.DB.prepare("INSERT INTO charge_events (charge_id, status, paypal_event_id, paypal_capture_id, amount_cents, currency, raw) VALUES (?1, ?2, ?3, ?4, 20000, 'MXN', '{}')").bind(chargeId, status, `WH-${chargeId}`, `CAP-${chargeId}`),
+      ]);
+    }
+
+    // «Abandoned» = no money moved and no approval in flight. captured: paid. capture_failed: the owner approved and
+    // PayPal keeps retrying the event for days. amount_mismatch: funds were captured with another amount.
+    for (const status of ["captured", "capture_failed", "amount_mismatch"]) {
+      it(`a booking whose deposit is ${status} is never released, whatever its age (30 h)`, async () => {
+        const a = await pendingAgedBy(30 * H);
+        await withDepositEvent(a, status);
+        const b = await other();
+        expect(await executeTool(ctx(b), "list_slots", {})).not.toContain(a.slot);
+        expect(await executeTool(ctx(b), "book_appointment", { slot_id: a.slot, pet_name: "Luna", species: "gato" })).toMatch(/ya se ocupó/);
+        expect(await appt(a.appt)).toEqual({ status: "pending_deposit", slot_id: a.slot });
+        expect((await slot(a.slot))?.taken).toBe(1);
+      });
+    }
+
+    it("a booking whose deposit order was only created (no money, nothing in flight) IS released at 4 h", async () => {
+      const a = await pendingAgedBy(4 * H);
+      await withDepositEvent(a, "created");
+      await executeTool(ctx(await other()), "list_slots", {});
+      expect((await appt(a.appt))?.status).toBe("cancelled");
+      expect((await slot(a.slot))?.taken).toBe(0);
+    });
+
+    it("m1: book_appointment alone (no list_slots before) claims a slot abandoned 4 h ago", async () => {
+      const a = await pendingAgedBy(4 * H);
+      const b = await other();
+      expect(await executeTool(ctx(b), "book_appointment", { slot_id: a.slot, pet_name: "Luna", species: "gato" })).toMatch(/appointment_id/);
+      expect(await appt(a.appt)).toEqual({ status: "cancelled", slot_id: `released-${a.appt}` });
+      expect(await count("appointments", "slot_id = ?1 AND conversation_id = ?2", a.slot, b)).toBe(1);
+    });
+
+    it("prod shape (the 4 orphans): one chat, 4 pending bookings on 4 slots with uncaptured deposit orders, 5 h old → all 4 released by one list_slots", async () => {
+      const conv = crypto.randomUUID();
+      const slots = [0, 1, 2, 3].map(() => crypto.randomUUID());
+      const appts: string[] = [];
+      await env.DB.batch([
+        env.DB.prepare("INSERT INTO contacts (id) VALUES (?1)").bind(conv),
+        env.DB.prepare("INSERT INTO conversations (id, contact_id) VALUES (?1, ?1)").bind(conv),
+        ...slots.map((s, i) => env.DB.prepare("INSERT INTO slots (id, starts_at, taken) VALUES (?1, ?2, 1)").bind(s, `2026-11-10T1${i}:00:00.000Z`)),
+      ]);
+      for (const s of slots) {
+        const pet = crypto.randomUUID();
+        const a = crypto.randomUUID();
+        appts.push(a);
+        await env.DB.batch([
+          env.DB.prepare("INSERT INTO pets (id, contact_id, name, species) VALUES (?1, ?2, 'Firulais', 'perro')").bind(pet, conv),
+          env.DB.prepare("INSERT INTO appointments (id, slot_id, contact_id, pet_id, conversation_id, created_at) VALUES (?1, ?2, ?3, ?4, ?3, ?5)").bind(a, s, conv, pet, new Date(NOW.getTime() - 5 * H).toISOString()),
+          env.DB.prepare("INSERT INTO charges (id, kind, appointment_id, conversation_id, paypal_order_id, paypal_request_id, amount_cents, currency, approve_url) VALUES (?1, 'deposit', ?1, ?2, ?3, ?4, 20000, 'MXN', 'https://www.sandbox.paypal.com/x')").bind(a, conv, `ORDER-${a}`, `deposit-${a}`),
+          env.DB.prepare("INSERT INTO charge_events (charge_id, status, raw) VALUES (?1, 'created', '{}')").bind(a),
+        ]);
+      }
+      await executeTool(ctx(await other()), "list_slots", {}); // the shared test D1 holds earlier free slots: assert the release in the DB
+      expect(await count("appointments", "conversation_id = ?1 AND status = 'cancelled' AND slot_id LIKE 'released-%'", conv)).toBe(4);
+      expect(await count("slots", `taken = 0 AND id IN (${slots.map((_, i) => `?${i + 1}`).join(",")})`, ...slots)).toBe(4);
+      expect(await count("slots", "taken = 1 AND id IN (" + appts.map((_, i) => `?${i + 1}`).join(",") + ")", ...appts.map((a) => `released-${a}`))).toBe(4);
+    });
+
+    it("the tombstone slot is never listed and never claimable (not a UUID: rejected at the schema; taken and in the past anyway)", async () => {
+      const a = await pendingAgedBy(4 * H);
+      const b = await other();
+      await executeTool(ctx(b), "list_slots", {}); // triggers the release
+      expect(await executeTool(ctx(b), "list_slots", {})).not.toContain("released-");
+      expect(await executeTool(ctx(b), "book_appointment", { slot_id: `released-${a.appt}`, pet_name: "Luna", species: "gato" })).toMatch(/inválida/);
+      expect(await count("appointments", "slot_id = ?1", `released-${a.appt}`)).toBe(1);
+    });
+  });
+
   it("save_contact_info is a partial update; escalate flips the conversation", async () => {
     const { conv } = await seedBooking();
     const c = ctx(conv);
