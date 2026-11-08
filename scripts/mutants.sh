@@ -295,4 +295,6 @@ run_mutant "food legend printed for every drug, not only antibiotics/NSAIDs (rx-
   's/if (withFood(v(m.medicamento)))/if (true)/' test/rx_layout.test.ts || status=1
 run_mutant "/console.html served without the doctor credential: notFound serves it as a static asset (audit M4)" src/app.ts \
   '\#app.get("/console.html", doctorAuth#d' test/console_auth.test.ts || status=1
+run_mutant "prescription/vaccine leaf anchors on a non-doctor segment: owner-spoken drug passes grounding (audit M1)" src/clinical/grounding.ts \
+  's/DOCTOR_ONLY.test(path) &&/false \&\&/' test/grounding.test.ts || status=1
 exit $status

@@ -7,10 +7,11 @@ import { BODY_SYSTEMS, type ConsultDraft, type GroundedField } from "./schema";
 export interface SegmentIn {
   idx: number;
   text: string;
+  speaker?: string; // "doctor" | "owner" | "unknown"; absent is treated as not-the-doctor (fail-closed)
 }
 export interface Discard {
   path: string;
-  reason: "segment_unknown" | "quote_not_in_segments" | "number_not_quoted" | "out_of_range" | "catalog_item_unknown";
+  reason: "segment_unknown" | "quote_not_in_segments" | "number_not_quoted" | "out_of_range" | "catalog_item_unknown" | "quote_not_by_doctor";
   quote?: string;
 }
 export interface GroundingReport {
@@ -85,7 +86,14 @@ function isGrounded(v: unknown): v is GroundedField {
  */
 export function validateGrounding(draft: ConsultDraft, segments: SegmentIn[], catalogIds: Set<string>): { body: ConsultDraft; report: GroundingReport } {
   const seg = new Map(segments.map((s) => [s.idx, s.text]));
+  const speakerOf = new Map(segments.map((s) => [s.idx, s.speaker]));
   const discarded: Discard[] = [];
+  // Only the doctor prescribes: a prescription or vaccine leaf may anchor ONLY on doctor segments. An owner
+  // segment ("en casa le daba ibuprofeno…") or an unlabeled/unknown one cannot. Fail-closed (§4.3): any cited
+  // segment that is not the doctor's drops the whole leaf — it is never shown pre-filled.
+  const DOCTOR_ONLY = /^(?:prescription|vaccines)\[/;
+  const bySpeaker = (field: GroundedField, path: string) =>
+    DOCTOR_ONLY.test(path) && !field.segment_ids.every((id) => speakerOf.get(id) === "doctor");
 
   const prune = (node: unknown, path: string): unknown => {
     if (Array.isArray(node)) {
@@ -101,6 +109,10 @@ export function validateGrounding(draft: ConsultDraft, segments: SegmentIn[], ca
       const reason = checkField(node, seg, RANGES[leaf]);
       if (reason) {
         discarded.push({ path, reason, quote: node.quote });
+        return undefined;
+      }
+      if (bySpeaker(node, path)) {
+        discarded.push({ path, reason: "quote_not_by_doctor", quote: node.quote });
         return undefined;
       }
       return node;
