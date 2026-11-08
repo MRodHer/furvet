@@ -97,6 +97,7 @@
   $("openBtn").addEventListener("click", async () => {
     const opt = $("apptSel").selectedOptions[0];
     if (!opt) return;
+    if (edited && !confirm("Se perderá lo escrito a mano en el expediente. ¿Abrir otra consulta?")) return;
     $("openBtn").disabled = true; // one open at a time: two in flight could paint consult A under consultId B
     try {
       let id = opt.getAttribute("data-consult");
@@ -105,6 +106,9 @@
         if (!ok) { setStatus(`No se pudo abrir: ${data.error}`, "err"); return; }
         id = data.id;
       }
+      // Nothing of the previous consult stays clickable while the new one loads: «Aprobar» or «Cobrar» in that
+      // interval would send A's form to B. refresh() shows them again from the server's answer.
+      $("work").classList.add("hidden"); $("deliveryCard").classList.add("hidden");
       consultId = id;
       await refresh();
       loadAppointments();
@@ -130,7 +134,8 @@
     $("doctorConsentState").textContent = doctorDone ? "Registrada." : "";
     $("recCard").classList.remove("hidden");
     // Both layers, or the button stays off (the server refuses anyway: 409).
-    $("recBtn").disabled = !(consult.owner_consent_at && doctorDone && consult.status === "recording");
+    $("recBtn").disabled = sending || !(consult.owner_consent_at && doctorDone && consult.status === "recording");
+    $("recBtn").textContent = pending && pending.id === consultId ? "Reintentar envío" : "Grabar";
     // Persistent and true: the audio is never stored (migrations/0002 line 2, transcribe.ts line 3). Once the
     // consult has a transcription, say so on every load — the live "Listo" would otherwise vanish on reload.
     if (consult.transcribed_at) $("recLabel").textContent = `✓ Audio borrado y transcrito · ${clinicTime(consult.transcribed_at)}`;
@@ -193,7 +198,10 @@
   }
   // A recording the server has not accepted yet: kept in memory only (never stored), re-sent on «Reintentar envío».
   let pending = null;
+  let sending = false; // one POST in flight: refresh() would re-enable the button while the server is still «recording»
   async function upload(id, blob) {
+    if (sending) return;
+    sending = true;
     pending = { id, blob };
     $("recLabel").textContent = "Enviando…"; $("recBtn").disabled = true;
     setStatus("Transcribiendo (puede tardar un minuto)…");
@@ -206,10 +214,22 @@
       res = { ok: false, status: 0 };
       data = { error: `sin conexión (${e.name})` };
     }
+    sending = false;
+    if (res.status === 409) {
+      // The first POST landed and only its answer was lost: the server already holds the transcript, so the blob is
+      // dropped and the persisted state is painted (a retry would answer 409 forever).
+      pending = null;
+      setStatus("El audio ya estaba transcrito.", "ok");
+      await refresh();
+      return;
+    }
     if (!res.ok) {
-      // The audio is still here: the button becomes the retry, nothing has to be recorded again.
-      setStatus(`No se pudo enviar el audio (${res.status || "red"}): ${data.error || ""}. El audio sigue en memoria: pulse «Reintentar envío».`, "err");
-      $("recLabel").textContent = "Audio pendiente de envío"; $("recBtn").textContent = "Reintentar envío"; $("recBtn").disabled = false;
+      // 404/413/415 never succeed on retry (consult gone, too large, empty or unsupported blob): the audio is dropped
+      // and the doctor records again. Anything else keeps the audio: the button becomes the retry.
+      const keep = ![404, 413, 415].includes(res.status);
+      if (!keep) pending = null;
+      setStatus(`No se pudo enviar el audio (${res.status || "red"}): ${data.error || ""}. ${keep ? "El audio sigue en memoria: pulse «Reintentar envío»." : "Grabe de nuevo."}`, "err");
+      $("recLabel").textContent = keep ? "Audio pendiente de envío" : "Audio rechazado"; $("recBtn").textContent = keep ? "Reintentar envío" : "Grabar"; $("recBtn").disabled = false;
       return;
     }
     pending = null;
@@ -220,7 +240,7 @@
     if (aiAllowed()) await requestDraft(id); else await refresh();
   }
   $("recBtn").addEventListener("click", async () => {
-    if (pending) { await upload(pending.id, pending.blob); return; }
+    if (pending && pending.id === consultId) { await upload(pending.id, pending.blob); return; }
     if (recorder && recorder.state === "recording") { recorder.stop(); return; }
     let stream;
     try { stream = await navigator.mediaDevices.getUserMedia({ audio: true }); } catch (e) { setStatus(`Sin micrófono: ${e.name}`, "err"); return; }
@@ -400,6 +420,7 @@
     if (id !== consultId) return;
     $("fillBtn").disabled = false;
     if (ok || !edited) await refresh(); // repaint from the server only with a new draft, or when nothing was typed (first draft, 402 notice)
+    else if (status === 402) $("fillState").textContent = "Sin suscripción activa la IA no genera el borrador; lo escrito a mano se conserva.";
     if (!ok && status !== 402) $("fillState").textContent = `No se pudo generar (${data.error || ""}). Puedes pedirlo de nuevo con el botón.`;
   }
   $("fillBtn").addEventListener("click", () => requestDraft(consultId));

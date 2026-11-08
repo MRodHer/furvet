@@ -125,7 +125,7 @@
         return;
       }
       const data = await res.json();
-      input.value = "";
+      input.value = input.value.replace(text, "").trimStart(); // only what the server took leaves the box
       await load(); // paints the message and the reply from the server; a pay link starts the polling
       status.textContent = data.escalated || !data.reply ? "Un miembro de la clínica te atenderá." : "";
     } catch {

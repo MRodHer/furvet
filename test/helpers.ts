@@ -283,3 +283,45 @@ export function claudeToolFake(texts: string[]) {
     },
   };
 }
+
+// Minimal DOM stub for the served sim.js (same approach as ticket.test.ts): records the tree, throws on innerHTML.
+export type N = { tag: string; children: N[]; textContent: string; value: string; disabled: boolean; listeners: Record<string, (e: unknown) => unknown>; [k: string]: unknown };
+export const txt = (n: N) => n.children.map((c) => c.textContent).join("");
+export function domStub() {
+  const mk = (tag: string): N => {
+    const n: N = {
+      tag,
+      children: [],
+      textContent: "",
+      value: "",
+      disabled: false,
+      listeners: {},
+      appendChild(c: N) {
+        n.children.push(c);
+        return c;
+      },
+      replaceChildren() {
+        n.children = [];
+      },
+      addEventListener(ev: string, fn: (e: unknown) => unknown) {
+        n.listeners[ev] = fn;
+      },
+      focus() {},
+    };
+    Object.defineProperty(n, "innerHTML", {
+      set() {
+        throw new Error("innerHTML assigned");
+      },
+    });
+    return n;
+  };
+  const byId: Record<string, N> = {};
+  const document = {
+    getElementById: (id: string) => (byId[id] ??= mk(id)),
+    createElement: mk,
+    createTextNode: (t: string) => ({ tag: "#text", children: [], textContent: t }),
+    addEventListener() {},
+    visibilityState: "visible",
+  };
+  return { document, byId };
+}

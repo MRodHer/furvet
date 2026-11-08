@@ -29,7 +29,7 @@
 <main>
   <h1>FurVet — chat con la clínica (demo)</h1>
   <p class="note">Simulador del chat. En producción esto es WhatsApp. Pagos en PayPal <strong>sandbox</strong>, sin dinero real.</p>
-  <div id="log" aria-label="Conversación"></div>
+  <div id="log" aria-live="polite" aria-label="Conversación"></div>
   <section id="consent">
     <label><input type="checkbox" id="consentBox"> Acepto que la consulta de mi mascota se grabe para generar el expediente. El audio se borra en cuanto se transcribe. (texto <code id="consentVersion"></code>)</label>
     <div><button id="consentBtn" type="button" disabled>Registrar consentimiento</button> <span id="consentState"></span></div>
