@@ -214,4 +214,12 @@ run_mutant "sim.js renders fenced blocks as plain text (no <pre>)" public/sim.js
   's/const pre = document.createElement("pre");/const pre = document.createElement("span");/' test/ticket.test.ts || status=1
 run_mutant "console folds cards on a desktop too (narrow gate removed)" public/console.js \
   's/if (!narrow.matches) return;/if (false) return;/' test/console_auth.test.ts || status=1
+run_mutant "re-sent booking returns ANOTHER chat's appointment (ownership dropped from the idempotent lookup)" src/agent/tools.ts \
+  's/WHERE slot_id = ?1 AND conversation_id = ?2/WHERE slot_id = ?1 AND ?2 = ?2/' test/booking.test.ts || status=1
+run_mutant "re-sent booking says «ya se ocupó» again (idempotency removed: orphan slots)" src/agent/tools.ts \
+  's/return mine ? booked(mine.id) : "Ese horario ya se ocupó/return !mine ? booked(mine.id) : "Ese horario ya se ocupó/' test/booking.test.ts || status=1
+run_mutant "booking result goes back to «ofrece el anticipo» (bot asks instead of sending the link)" src/agent/tools.ts \
+  's/Llama create_deposit AHORA con ese appointment_id, en el mismo turno, sin preguntar al dueño\./Ahora ofrece el anticipo con create_deposit./' test/booking.test.ts || status=1
+run_mutant "system prompt goes back to «ofrece el anticipo»" src/agent/run.ts \
+  's/llama create_deposit AHORA con ese appointment_id, en el mismo turno, sin preguntar al dueño, y entrega la liga en esa misma respuesta/ofrece el anticipo y usa create_deposit con el appointment_id/' test/booking.test.ts || status=1
 exit $status

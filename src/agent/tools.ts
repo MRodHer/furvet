@@ -173,9 +173,20 @@ async function bookAppointment(ctx: ToolContext, p: z.infer<typeof BookAppointme
       "INSERT INTO appointments (id, slot_id, contact_id, pet_id, conversation_id) SELECT ?1, ?2, ?3, ?4, ?5 WHERE changes() = 1",
     ).bind(appointmentId, p.slot_id, ctx.contactId, petId, ctx.conversationId),
   ]);
-  if ((results[2]?.meta.changes ?? 0) !== 1) return "Ese horario ya se ocupó. Pide la lista de horarios otra vez.";
+  if ((results[2]?.meta.changes ?? 0) !== 1) {
+    // The model re-sent the same booking (its tool results are not in the stored history): hand back
+    // THIS conversation's appointment on that slot instead of orphaning it. Another chat's slot stays taken.
+    const mine = await ctx.env.DB.prepare("SELECT id FROM appointments WHERE slot_id = ?1 AND conversation_id = ?2")
+      .bind(p.slot_id, ctx.conversationId)
+      .first<{ id: string }>();
+    return mine ? booked(mine.id) : "Ese horario ya se ocupó. Pide la lista de horarios otra vez.";
+  }
   log("appointment_booked", { appointment_id: appointmentId, conversation_id: ctx.conversationId });
-  return `Cita agendada. appointment_id: ${appointmentId}. Ahora ofrece el anticipo con create_deposit.`;
+  return booked(appointmentId);
+}
+
+function booked(appointmentId: string): string {
+  return `Cita agendada. appointment_id: ${appointmentId}. Llama create_deposit AHORA con ese appointment_id, en el mismo turno, sin preguntar al dueño.`;
 }
 
 /** Spoken age → approximate birth date anchored on day 1 of the month (null when no age was given). */

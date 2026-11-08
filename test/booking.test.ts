@@ -111,10 +111,65 @@ describe("booking + deposit tools (E7, E8, E9, V17)", () => {
     const c = ctx(conv);
     const input = { slot_id: slot, pet_name: "Firulais", species: "perro" };
     const [a, b] = await Promise.all([executeTool(c, "book_appointment", input), executeTool(c, "book_appointment", input)]);
-    const wins = [a, b].filter((x) => x.includes("appointment_id")).length;
-    expect(wins).toBe(1);
+    // Both calls come from the same chat: the loser gets the winner's id back (idempotent), never a second row.
+    const ids = [a, b].map((x) => /appointment_id: ([0-9a-f-]{36})/.exec(x)?.[1]);
+    expect(ids[0]).toBeDefined();
+    expect(ids[1]).toBe(ids[0]);
     expect(await count("appointments", "conversation_id = ?1", conv)).toBe(1);
     expect(await count("pets", "contact_id = ?1", conv)).toBe(1);
+  });
+
+  describe("re-sent booking (prod bug: the bot asked «¿genero la liga?», then re-booked and orphaned the slot)", () => {
+    async function seed(conv: string, slot: string) {
+      await env.DB.batch([
+        env.DB.prepare("INSERT INTO contacts (id) VALUES (?1)").bind(conv),
+        env.DB.prepare("INSERT INTO conversations (id, contact_id) VALUES (?1, ?1)").bind(conv),
+        env.DB.prepare("INSERT OR IGNORE INTO slots (id, starts_at) VALUES (?1, '2026-11-10T11:00:00.000Z')").bind(slot),
+      ]);
+    }
+    const idOf = (out: string) => /appointment_id: ([0-9a-f-]{36})/.exec(out)?.[1];
+
+    it("same slot, same chat → the same appointment_id again, one appointment, one pet, and create_deposit accepts it", async () => {
+      const conv = crypto.randomUUID();
+      const slot = crypto.randomUUID();
+      await seed(conv, slot);
+      const c = ctx(conv);
+      const input = { slot_id: slot, pet_name: "Firulais", species: "perro" };
+      const first = await executeTool(c, "book_appointment", input);
+      const again = await executeTool(c, "book_appointment", input);
+      expect(idOf(first)).toBeDefined();
+      expect(again).not.toMatch(/ya se ocupó/);
+      expect(idOf(again)).toBe(idOf(first));
+      expect(await count("appointments", "conversation_id = ?1", conv)).toBe(1);
+      expect(await count("pets", "contact_id = ?1", conv)).toBe(1);
+      // create_deposit is keyed by that same id (unchanged code): the chat gets the link for the existing booking.
+      expect(await executeTool(c, "create_deposit", { appointment_id: idOf(again) })).not.toBe("Cita inválida.");
+    });
+
+    it("same slot, ANOTHER chat → still «ya se ocupó» and the other chat's appointment id never leaks", async () => {
+      const convA = crypto.randomUUID();
+      const convB = crypto.randomUUID();
+      const slot = crypto.randomUUID();
+      await seed(convA, slot);
+      await seed(convB, slot);
+      const a = await executeTool(ctx(convA), "book_appointment", { slot_id: slot, pet_name: "Firulais", species: "perro" });
+      const b = await executeTool(ctx(convB), "book_appointment", { slot_id: slot, pet_name: "Luna", species: "gato" });
+      expect(b).toMatch(/ya se ocupó/);
+      expect(b).not.toContain(idOf(a)!);
+      expect(await count("appointments", "conversation_id = ?1", convB)).toBe(0);
+    });
+
+    it("the booking result and the system prompt tell the model to call create_deposit NOW, in the same turn, without asking", async () => {
+      const conv = crypto.randomUUID();
+      const slot = crypto.randomUUID();
+      await seed(conv, slot);
+      const out = await executeTool(ctx(conv), "book_appointment", { slot_id: slot, pet_name: "Firulais", species: "perro" });
+      expect(out).toMatch(/create_deposit AHORA .*en el mismo turno, sin preguntar al dueño/);
+      expect(out).not.toMatch(/ofrece/);
+      const prompt = systemPrompt("Clínica");
+      expect(prompt).toMatch(/llama create_deposit AHORA con ese appointment_id, en el mismo turno, sin preguntar al dueño/);
+      expect(prompt).not.toMatch(/ofrece el anticipo/);
+    });
   });
 
   it("book_appointment rejects a past slot, a bad species and extra keys", async () => {
