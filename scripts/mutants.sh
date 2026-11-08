@@ -269,4 +269,10 @@ run_mutant "chat input emptied although the owner typed more during the wait (M5
   's/input.value = input.value.replace(text, "").trimStart();/input.value = "";/' test/frontend_audit.test.ts || status=1
 run_mutant "chat log stops being a live region: new bot bubbles are never announced (accessibility)" public/sim.html \
   's/<div id="log" aria-live="polite" aria-label/<div id="log" aria-label/' test/frontend_audit.test.ts || status=1
+run_mutant "in-flight flag never released: the button stays locked and the retry is dead (B1)" public/console.js \
+  's/^    sending = false;$/    void 0;/' test/frontend_audit.test.ts || status=1
+run_mutant "retry fires for a pending audio of another consult (B1)" public/console.js \
+  's/if (pending \&\& pending.id === consultId) { await upload/if (pending) { await upload/' test/frontend_audit.test.ts || status=1
+run_mutant "any 409 drops the audio, also the one for missing consent (B1 defense in depth)" public/console.js \
+  's/if (res.status === 409 \&\& data.error === "this consult already has a transcript") {/if (res.status === 409) {/' test/frontend_audit.test.ts || status=1
 exit $status
