@@ -130,7 +130,7 @@ describe("sim.js renders fenced blocks as <pre> through textContent", () => {
       visibilityState: "visible",
     };
     const payload = `${F}\nConsulta <script>alert(1)</script>\n  1 x $1.00               $1.00\n${F}\nTicket en PDF: https://furvet.test/t/x`;
-    const fetch = async () => ({ ok: true, json: async () => ({ messages: [{ direction: "outbound", text: payload }], consent: null, payment_pending: false }) });
+    const fetch = async () => ({ ok: true, json: async () => ({ messages: [{ id: 1, direction: "outbound", text: payload }], consent: null, payment_pending: false }) });
     const localStorage = { getItem: () => "s", setItem() {} };
     new Function("document", "fetch", "localStorage", "setInterval", "clearInterval", js)(document, fetch, localStorage, () => 0, () => {});
     await new Promise((r) => setTimeout(r, 0)); // load(): fetch → json → render
@@ -154,7 +154,7 @@ describe("sim.js renders fenced blocks as <pre> through textContent", () => {
     const url = "https://www.sandbox.paypal.com/checkoutnow?token=5O190127TN364715T";
     // The exact shape /charge writes: ticket, /t link, pay line ending with the URL, then the sentence on its own line.
     const text = `${F}\nSALDO                    $488.00\nMXN\n${F}\nTicket en PDF: https://furvet.test/t/x\nPagar saldo ($488.00 MXN): ${url}\nAl pagar recibirás el informe completo.`;
-    const fetch = async () => ({ ok: true, json: async () => ({ messages: [{ direction: "outbound", text }], consent: null, payment_pending: true }) });
+    const fetch = async () => ({ ok: true, json: async () => ({ messages: [{ id: 1, direction: "outbound", text }], consent: null, payment_pending: true }) });
     new Function("document", "fetch", "localStorage", "setInterval", "clearInterval", js)(document, fetch, { getItem: () => "s", setItem() {} }, () => 0, () => {});
     await new Promise((r) => setTimeout(r, 0));
     const anchors = log.children[0]!.children.filter((c) => c.tag === "a");

@@ -70,12 +70,19 @@
     log.scrollTop = log.scrollHeight;
   }
 
+  // Only messages newer than the last one painted are appended: the log is never rebuilt, so a screen reader does not
+  // re-read it, the scroll does not jump and the pay link is not recreated under a finger. A failed read just waits.
+  let lastId = 0;
   async function load() {
-    const res = await fetch(`/api/v1/sim/${session}/messages`);
-    if (!res.ok) return;
-    const data = await res.json();
-    log.replaceChildren();
-    for (const m of data.messages) render(m.direction, m.text);
+    let data;
+    try {
+      const res = await fetch(`/api/v1/sim/${session}/messages`);
+      if (!res.ok) return;
+      data = await res.json();
+    } catch {
+      return;
+    }
+    for (const m of data.messages) if (m.id > lastId) { render(m.direction, m.text); lastId = m.id; }
     setPolling(data.payment_pending === true);
     if (data.consent && data.consent.owner_consent_at) {
       consentState.textContent = `Registrado ${data.consent.owner_consent_at}`;
@@ -104,26 +111,25 @@
     e.preventDefault();
     const text = input.value.trim();
     if (!text) return;
-    input.value = "";
     send.disabled = true;
-    render("inbound", text);
-    status.textContent = "Escribiendo…";
+    status.textContent = "Enviando…";
+    // The text stays in the box until the server took it: a failure shows its real status and nothing to retype.
     try {
       const res = await fetch("/api/v1/sim/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ session_id: session, text }),
       });
-      if (res.status === 429) {
-        status.textContent = "Límite de la demo alcanzado por hoy.";
+      if (!res.ok) {
+        status.textContent = res.status === 429 ? "Límite de la demo alcanzado por hoy." : `No se pudo enviar (${res.status}). Intenta de nuevo.`;
         return;
       }
       const data = await res.json();
-      if (data.reply) render("outbound", data.reply);
-      load(); // the reply may carry a pay link: the server decides whether to start polling
-      status.textContent = data.escalated ? "Un miembro de la clínica te atenderá." : data.reply ? "" : "Un miembro de la clínica te atenderá.";
+      input.value = "";
+      await load(); // paints the message and the reply from the server; a pay link starts the polling
+      status.textContent = data.escalated || !data.reply ? "Un miembro de la clínica te atenderá." : "";
     } catch {
-      status.textContent = "No se pudo enviar. Intenta de nuevo.";
+      status.textContent = "No se pudo enviar (sin conexión). Intenta de nuevo.";
     } finally {
       send.disabled = false;
       input.focus();

@@ -43,6 +43,8 @@
   .med { border:1px dashed #d1d5db; border-radius:8px; padding:8px; margin:6px 0; }
   .grid2 { display:grid; grid-template-columns: 1fr 1fr; gap:6px; }
   .sys { display:grid; grid-template-columns: 140px auto auto 1fr; gap:6px; align-items:center; font-size:.85rem; margin:3px 0; }
+  @media (max-width: 639px) { .sys { grid-template-columns: 1fr 1fr; } .sys > span, .sys .field:last-child { grid-column: 1 / -1; } }
+  @media (pointer: coarse) { .seg .who, button.link { min-height: 44px; padding: 10px 12px; } }
   .hidden { display:none; }
   .sr-only { position:absolute; width:1px; height:1px; overflow:hidden; clip:rect(0 0 0 0); }
 </style>
@@ -51,6 +53,7 @@
 <main>
   <h1>FurVet — consola de la doctora</h1>
   <p class="note">Demo del hackatón: datos ficticios. El audio se transcribe y se descarta; nunca se guarda. Lo que marca <span class="badge">IA</span> viene de la transcripción y lleva su frase; lo que la IA no pudo sustentar aparece en «Descartado», nunca prellenado. Nada sale al dueño hasta que apruebes.</p>
+  <div id="status" aria-live="polite"></div>
 
   <details class="card" id="subCard" aria-labelledby="h-sub" open>
     <summary><h2 id="h-sub">0. Suscripción de la clínica</h2></summary>
@@ -82,7 +85,6 @@
       <button id="recBtn" type="button" disabled>Grabar</button>
       <span class="note">Tope 30 min · un solo archivo al terminar · se envía al detener</span>
     </div>
-    <div id="status" aria-live="polite"></div>
   </details>
 
   <div class="cols hidden" id="work">

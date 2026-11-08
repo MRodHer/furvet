@@ -236,4 +236,19 @@ run_mutant "re-sent lookup ignores the slot (returns a confirmed appointment on 
   's/SELECT id FROM appointments WHERE slot_id = ?1 AND conversation_id = ?2/SELECT id FROM appointments WHERE ?1 = ?1 AND conversation_id = ?2/' test/booking.test.ts || status=1
 run_mutant "«audio borrado» label shows the raw UTC instant, not the clinic zone (fix-audio-borrado-label)" public/console.js \
   's/Audio borrado y transcrito · \${clinicTime(consult.transcribed_at)}/Audio borrado y transcrito · \${consult.transcribed_at}/' test/console_auth.test.ts || status=1
+# ---- frontend audit (Constructora C, fix-auditoria-hackathon carril C) ----
+run_mutant "audio blob dropped before the server accepted it (a failed upload loses the recording, B1)" public/console.js \
+  's/^    pending = null;$/    pending = { id, blob: null };/' test/frontend_audit.test.ts || status=1
+run_mutant "refresh() paints whatever consult answers last (race on «Abrir consulta», M1)" public/console.js \
+  '/const { ok, data } = await api(`\/${id}`);/{n;d}' test/frontend_audit.test.ts || status=1
+run_mutant "a failed «Regenerar» repaints over the hand edits (M2)" public/console.js \
+  's/if (ok || !edited) await refresh();/await refresh();/' test/frontend_audit.test.ts || status=1
+run_mutant "chat input emptied before the server took the message (a 503 loses what was typed, M5)" public/sim.js \
+  's/^    send.disabled = true;$/    send.disabled = true; input.value = "";/' test/frontend_audit.test.ts || status=1
+run_mutant "chat log rebuilt on every poll (re-read by screen readers, scroll jump, link recreated, M9)" public/sim.js \
+  's/^    for (const m of data.messages) if (m.id > lastId) {/    log.replaceChildren(); lastId = 0; for (const m of data.messages) if (m.id > lastId) {/' test/frontend_audit.test.ts || status=1
+run_mutant "console #status back inside the hidden recording card (errors invisible, M4)" public/console.html \
+  '/^  <div id="status" aria-live="polite"><\/div>$/d; /<button id="recBtn"/i\    <div id="status" aria-live="polite"></div>' test/frontend_audit.test.ts || status=1
+run_mutant "paypal-return sends the owner to the Basic-Auth board again (M6)" public/paypal-return.html \
+  's|<p><a href="/sim.html">Volver al chat</a></p>|<p><a href="/sim.html">Volver al chat</a> · <a href="/cobros.html">Ver tablero de cobros</a></p>|' test/frontend_audit.test.ts || status=1
 exit $status
