@@ -155,6 +155,7 @@ describe("AI draft with grounding (V7-B, V8-B, V18-B, E12)", () => {
     expect(out.grounding.incomplete_medications).toEqual([]);
     expect(out.grounding.discarded).toEqual([]);
     const sys = String(JSON.parse(calls.find((c) => c.key === PP.claude)!.body).system);
+    expect(sys).toMatch(/Separa la concentración de la cantidad por toma/); // the split instruction must stay (pinned so it can't be silently dropped)
     expect(sys).toMatch(/concentraci[oó]n dicha con cifras/);
     expect(sys).toMatch(/deja el campo dosis fuera/);
 

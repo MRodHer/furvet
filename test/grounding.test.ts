@@ -92,7 +92,12 @@ describe("grounding validator (V4, V5, V6)", () => {
       "tres cuartos de tableta", "una y media tabletas", "un tercio de tableta", "1/2 tableta", "0.5 tableta", "½ tableta", "¼ comprimido", "1 1/2 tabletas",
     ];
     for (const d of good) expect(incompleteMedications({ prescription: [{ ...complete, dosis: g(d, d, [3]) }] }), d).toEqual([]);
-    const bad = ["un poquito", "bastante", "una dosis alta", "lo normal", "tableta", "250", "miligramos", "miligramos cada doce horas", "250 miligramitos"];
+    // A numeral counts ONLY next to the unit: a vague object in between is not a quantity (fail-closed). Plus the
+    // earlier bad cases, and «medianamente tableta» (pins the \b: «media» inside a longer word is not a fraction word).
+    const bad = [
+      "un poquito de tableta", "un pedazo de la tableta", "una parte de la tableta", "un chorrito de mililitros", "una dosis alta de tabletas",
+      "un poquito", "bastante", "una dosis alta", "lo normal", "medianamente tableta", "tableta", "250", "miligramos", "miligramos cada doce horas", "250 miligramitos",
+    ];
     for (const d of bad) expect(incompleteMedications({ prescription: [{ ...complete, dosis: g(d, d, [3]) }] }), d).toEqual([{ index: 0, missing: ["dosis"] }]);
   });
 

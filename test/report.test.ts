@@ -1,6 +1,6 @@
 import { env } from "cloudflare:test";
 import { afterEach, describe, expect, it } from "vitest";
-import { ageLabel } from "../src/reports/render";
+import { ageLabel, rxBlocks } from "../src/reports/render";
 import { approvedBody, approvedEvent, assertNoPii, captureCompletedEvent, captureLogs, claudeToolFake, doctorEnv, doctorHeaders, makeApp, NOW, paypalFakes, seedConsult, uniqueOrderFake, webhookHeaders } from "./helpers";
 
 const fakes = (captureValue = "881.00") => ({ ...paypalFakes({ captureValue }), ...uniqueOrderFake, ...claudeToolFake(["Su perro tiene gastroenteritis leve."]) });
@@ -171,6 +171,17 @@ describe("printable rx and account ticket (RX1, TK1–TK5)", () => {
     expect(text.indexOf("1. amoxicilina")).toBeGreaterThan(0);
     expect(text.indexOf("1. amoxicilina")).toBeLessThan(text.indexOf("2. aaa-omeprazol"));
     expect(text.indexOf("2. aaa-omeprazol")).toBeLessThan(text.indexOf("Indicaciones urgentes"));
+  });
+
+  it("RX-legend: the food legend survives accents (NFD normalize) — «Ácido acetilsalicílico» (AINE) gets «Con o después de alimentos.»", () => {
+    const dd = (value: string) => ({ value, source: "doctor" as const });
+    const body = {
+      subjective: {}, vitals: {}, physical_exam: {}, assessment: {}, plan: {}, vaccines: [], billable: [],
+      prescription: [{ medicamento: dd("Ácido acetilsalicílico"), concentracion: dd("100 mg"), forma_farmaceutica: dd("tableta"), dosis: dd("media tableta"), frecuencia: dd("cada 24 horas"), duracion: dd("5 días"), via_administracion: dd("oral") }],
+    } as unknown as Parameters<typeof rxBlocks>[0];
+    const h = { clinicName: "c", doctorName: "d", licenseLabel: "l", petName: "p", species: "perro", folio: "F", approvedAt: "2026-11-07" };
+    const blocks = rxBlocks(body, h, { ownerName: "—", breed: null, sex: null, birthDate: null });
+    expect(blocks.some((b) => "text" in b && b.text === "Con o después de alimentos.")).toBe(true);
   });
 
   it("RX3: ageLabel — years/months, singular, birthday today, future, impossible and garbage dates", () => {
