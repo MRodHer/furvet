@@ -234,4 +234,6 @@ run_mutant "pending lookup ignores the status (a confirmed appointment gets move
   's/SELECT id, slot_id FROM appointments WHERE conversation_id = ?1 AND status = '"'"'pending_deposit'"'"' LIMIT 1/SELECT id, slot_id FROM appointments WHERE conversation_id = ?1 LIMIT 1/' test/booking.test.ts || status=1
 run_mutant "re-sent lookup ignores the slot (returns a confirmed appointment on another slot)" src/agent/tools.ts \
   's/SELECT id FROM appointments WHERE slot_id = ?1 AND conversation_id = ?2/SELECT id FROM appointments WHERE ?1 = ?1 AND conversation_id = ?2/' test/booking.test.ts || status=1
+run_mutant "«audio borrado» label shows the raw UTC instant, not the clinic zone (fix-audio-borrado-label)" public/console.js \
+  's/Audio borrado y transcrito · \${clinicTime(consult.transcribed_at)}/Audio borrado y transcrito · \${consult.transcribed_at}/' test/console_auth.test.ts || status=1
 exit $status
