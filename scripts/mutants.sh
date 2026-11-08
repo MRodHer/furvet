@@ -244,4 +244,10 @@ run_mutant "lazy release cancels the booking but never frees the real slot" src/
   's/UPDATE slots SET taken = 0 WHERE id IN (SELECT a.slot_id/UPDATE slots SET taken = 0 WHERE 0 AND id IN (SELECT a.slot_id/' test/booking.test.ts || status=1
 run_mutant "late deposit capture no longer logged" src/routes/webhook.ts \
   's/if (appt \&\& appt.status !== "confirmed") log("deposit_captured_late"/if (appt \&\& appt.status === "confirmed") log("deposit_captured_late"/' test/webhook.test.ts || status=1
+run_mutant "webhook: a late DENIED after captured is recorded again (captured-is-terminal guard limited to COMPLETED)" src/routes/webhook.ts \
+  's/if (charge.status === "captured") {/if (charge.status === "captured" \&\& event.event_type === "PAYMENT.CAPTURE.COMPLETED") {/' test/webhook.test.ts || status=1
+run_mutant "charges_current takes the last event again (0006 view without captured-first order)" migrations/0006_captured_is_terminal.sql \
+  "s/ORDER BY (status = 'captured') DESC, id DESC LIMIT 1/ORDER BY id DESC LIMIT 1/" test/webhook.test.ts || status=1
+run_mutant "agent answers only in Spanish again (owner-language line removed)" src/agent/run.ts \
+  's/Responde en el idioma en que escribe el dueño (español o inglés; si escribe en inglés, contesta en inglés); por defecto español mexicano/Responde en español mexicano/' test/booking.test.ts || status=1
 exit $status

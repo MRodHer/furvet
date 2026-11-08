@@ -213,6 +213,38 @@ describe("PayPal webhook (E1-E4, E6, E14, D.1)", () => {
     assertNoPii(logs.lines);
   });
 
+  describe("M1: captured is terminal (a late DENIED never un-pays a charge)", () => {
+    const denied = (id: string, captureId: string, customId: string, orderId: string) => ({
+      ...captureCompletedEvent(id, captureId, customId, "200.00", "MXN", orderId),
+      event_type: "PAYMENT.CAPTURE.DENIED",
+    });
+    const current = (chargeId: string) => env.DB.prepare("SELECT status FROM charges_current WHERE id = ?1").bind(chargeId).first<{ status: string }>();
+
+    it("code barrier: DENIED after captured → 200 already_captured, no row appended, appointment stays confirmed", async () => {
+      const { chargeId, orderId, apptStatus, events } = await seedDeposit();
+      const { app } = makeApp(paypalFakes());
+      expect(await (await post(app, captureCompletedEvent("WH-M1a", "CAP-M1", chargeId, "200.00", "MXN", orderId))).json()).toEqual({ status: "captured" });
+      expect(await (await post(app, denied("WH-M1b", "CAP-M1", chargeId, orderId))).json()).toEqual({ status: "already_captured" });
+      expect(await events()).toBe(2); // created + captured; nothing for the DENIED
+      expect(await events("status = 'denied'")).toBe(0);
+      expect(await apptStatus()).toBe("confirmed");
+      expect((await current(chargeId))?.status).toBe("captured");
+    });
+
+    it("DB barrier (0006): a denied row written straight into the ledger after captured leaves charges_current = captured", async () => {
+      const { chargeId } = await seedDeposit();
+      await env.DB.prepare("INSERT INTO charge_events (charge_id, status, paypal_event_id, paypal_capture_id, amount_cents, currency, raw) VALUES (?1, 'captured', ?2, ?3, 20000, 'MXN', '{}')").bind(chargeId, `WH-${chargeId}-c`, `CAP-${chargeId}`).run();
+      await env.DB.prepare("INSERT INTO charge_events (charge_id, status, paypal_event_id, paypal_capture_id, amount_cents, currency, raw) VALUES (?1, 'denied', ?2, ?3, NULL, NULL, '{}')").bind(chargeId, `WH-${chargeId}-d`, `CAP-${chargeId}-d`).run();
+      expect(await count("charge_events", "charge_id = ?1", chargeId)).toBe(3);
+      expect((await current(chargeId))?.status).toBe("captured");
+      // Without a captured row the view still shows the latest event (unchanged behaviour).
+      const { chargeId: other } = await seedDeposit();
+      await env.DB.prepare("INSERT INTO charge_events (charge_id, status, paypal_event_id, raw) VALUES (?1, 'denied', ?2, '{}')").bind(other, `WH-${other}-d`).run();
+      expect((await current(other))?.status).toBe("denied");
+      expect((await env.DB.prepare("SELECT COUNT(*) AS n FROM d1_migrations").first<{ n: number }>())?.n).toBe(6);
+    });
+  });
+
   it("unknown event types are acknowledged and ignored", async () => {
     const { app } = makeApp(paypalFakes());
     const res = await post(app, { id: "WH-12", event_type: "CUSTOMER.DISPUTE.CREATED", resource: {} }); // subscription events have their own suite now

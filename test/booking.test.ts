@@ -296,6 +296,11 @@ describe("booking + deposit tools (E7, E8, E9, V17)", () => {
       expect(await count("charges", "appointment_id = ?1", appt)).toBe(1);
     });
 
+    it("judge in English: the system prompt tells the model to answer in the owner's language, Spanish by default", () => {
+      const prompt = systemPrompt("Clínica");
+      expect(prompt).toMatch(/Responde en el idioma en que escribe el dueño \(español o inglés; si escribe en inglés, contesta en inglés\); por defecto español mexicano/);
+    });
+
     it("the booking result and the system prompt tell the model to call create_deposit NOW, in the same turn, without asking", async () => {
       const conv = crypto.randomUUID();
       const slot = crypto.randomUUID();
