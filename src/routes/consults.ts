@@ -14,7 +14,7 @@ import { sniffAudio, transcribe, TranscribeError, WHISPER_MODEL } from "../clini
 import type { Deps, Env } from "../env";
 import { intVar } from "../env";
 import { errName, log } from "../log";
-import { isSubscriptionActive, subscriptionRequired } from "../subscription";
+import { aiGate } from "../subscription";
 
 export const DOCTOR_CONSENT_VERSION = "doctor-v1-2026-11-04";
 const AUDIO_BYTES_PER_SECOND = 4000; // 32 kbps, the console's recorder setting
@@ -55,6 +55,18 @@ export function consultsRoutes(deps: Deps) {
 
   const getConsult = (env: Env, id: string) =>
     env.DB.prepare(`SELECT ${CONSULT_COLUMNS} FROM consults WHERE id = ?1`).bind(id).first<ConsultRow>();
+  // m3: the owner may tick consent in the chat AFTER the doctor opened the consult; the consult snapshot
+  // (taken at creation) would then stay NULL forever and /audio would 409 with no way out. Copy the owner's
+  // consent from the conversation into the consult ONCE, only while the consult's own copy is NULL (first
+  // copy still wins, evidence stays append-only). If the owner has not consented, nothing changes and /audio
+  // stays fail-closed. Both columns move together, from the same conversation row.
+  const CONV_CONSENT = "SELECT v.owner_consent_at FROM conversations v JOIN appointments a ON a.conversation_id = v.id WHERE a.id = consults.appointment_id";
+  const syncOwnerConsent = (env: Env, id: string) =>
+    env.DB.prepare(
+      `UPDATE consults SET owner_consent_at = (${CONV_CONSENT}),
+              owner_consent_version = (SELECT v.owner_consent_version FROM conversations v JOIN appointments a ON a.conversation_id = v.id WHERE a.id = consults.appointment_id)
+       WHERE consults.id = ?1 AND consults.owner_consent_at IS NULL AND (${CONV_CONSENT}) IS NOT NULL`,
+    ).bind(id).run();
   /** Owner identity, only to strip it from what the model sees. */
   const ownerOf = async (env: Env, appointmentId: string) =>
     (await env.DB.prepare("SELECT c.name, c.email FROM appointments a JOIN contacts c ON c.id = a.contact_id WHERE a.id = ?1")
@@ -97,6 +109,7 @@ export function consultsRoutes(deps: Deps) {
   app.get("/:id", async (c) => {
     const id = Id.safeParse(c.req.param("id"));
     if (!id.success) return c.json({ error: "invalid id" }, 400);
+    await syncOwnerConsent(c.env, id.data); // m3: pick up a consent the owner gave after the consult opened
     const consult = await getConsult(c.env, id.data);
     if (!consult) return c.json({ error: "not found" }, 404);
     const pet = await c.env.DB.prepare(
@@ -141,6 +154,7 @@ export function consultsRoutes(deps: Deps) {
     if (!env.AI) return c.json({ error: "transcription provider not configured" }, 503);
     const id = Id.safeParse(c.req.param("id"));
     if (!id.success) return c.json({ error: "invalid id" }, 400);
+    await syncOwnerConsent(env, id.data); // m3: a consent the owner gave after the consult opened unblocks recording
     const consult = await getConsult(env, id.data);
     if (!consult) return c.json({ error: "not found" }, 404);
     // (2) both consents, and the consult still waiting for its audio
@@ -188,7 +202,9 @@ export function consultsRoutes(deps: Deps) {
     // (7) roles by content; unlabeled is a visible state, reported in the response
     let labels = new Map<number, Speaker>();
     let labeled = false;
-    if (env.ANTHROPIC_API_KEY && result.segments.length > 0) {
+    // m4: speaker labeling calls the model, so it goes through the same subscription gate; no subscription ⇒
+    // segments are stored unlabeled ('unknown', a visible state), the transcription itself is never blocked.
+    if (env.ANTHROPIC_API_KEY && result.segments.length > 0 && (await aiGate(env)) === "ok") {
       try {
         const owner = await ownerOf(env, consult.appointment_id);
         labels = await labelSpeakers(deps.fetch, env.ANTHROPIC_API_KEY, result.segments.map((s) => ({ idx: s.idx, text: redactOwner(s.text, owner) })));
@@ -231,19 +247,12 @@ export function consultsRoutes(deps: Deps) {
   app.post("/:id/fill", async (c) => {
     const env = c.env;
     if (!env.ANTHROPIC_API_KEY) return c.json({ error: "model not configured" }, 503);
-    // The clinic pays for the AI: no active subscription, no call to the model. Store down ⇒ deny.
-    if (subscriptionRequired(env)) {
-      let active: boolean;
-      try {
-        active = await isSubscriptionActive(env);
-      } catch (e) {
-        log("subscription_check_failed", { error: errName(e) });
-        return c.json({ error: "subscription check unavailable" }, 503);
-      }
-      if (!active) {
-        log("subscription_required_denied", { route: c.req.routePath });
-        return c.json({ error: "subscription_required" }, 402);
-      }
+    // The clinic pays for the AI: no active subscription, no call to the model. Store down ⇒ deny (m4 shares aiGate).
+    const gate = await aiGate(env);
+    if (gate === "error") return c.json({ error: "subscription check unavailable" }, 503);
+    if (gate === "required") {
+      log("subscription_required_denied", { route: c.req.routePath });
+      return c.json({ error: "subscription_required" }, 402);
     }
     const id = Id.safeParse(c.req.param("id"));
     if (!id.success) return c.json({ error: "invalid id" }, 400);

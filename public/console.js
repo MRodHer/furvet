@@ -24,6 +24,7 @@
     number_not_quoted: "el número no fue dicho con cifras en la frase citada",
     out_of_range: "fuera del rango fisiológico",
     catalog_item_unknown: "no corresponde a un concepto del catálogo",
+    quote_not_by_doctor: "la receta/vacuna se apoya en algo que no dijo la doctora",
   };
   // Field catalog (labels in Spanish; names port the clinical contract). type: text | num | enum.
   const SECTIONS = [

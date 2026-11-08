@@ -10,7 +10,9 @@ import { Hono } from "hono";
 import { doctorAuth } from "../auth";
 import { buildLines, computeBill, BillingError, type Bill, type BillLine, type CatalogRow } from "../billing";
 import { ApprovedConsult } from "../clinical/schema";
-import { incompleteMedications } from "../clinical/grounding";
+import { incompleteMedications, validateGrounding } from "../clinical/grounding";
+import { redactOwner } from "../clinical/redact";
+import { aiGate } from "../subscription";
 import { MESSAGE_MAX, messageInserts, newToken, tokenInsert } from "../delivery";
 import { intVar, type Deps, type Env } from "../env";
 import { cleanImage, ImageError, MAX_IMAGE_BYTES, type CleanImage } from "../images";
@@ -63,6 +65,24 @@ export function approveRoutes(deps: Deps, paypalFor: (env: Env) => PayPalClient 
       .first<ConsultRow>();
   const billExists = async (env: Env, id: string) =>
     Boolean(await env.DB.prepare("SELECT 1 AS x FROM consult_bills WHERE consult_id = ?1").bind(id).first());
+
+  // M2: a `source:"ai"` leaf claims "the AI derived this from these segments". That claim must hold against
+  // the STORED transcript, not the client's word. On an ApprovedConsult only ai leaves carry segment_ids/quote,
+  // so the deterministic validator re-checks EXACTLY those (and applies the doctor-speaker rule, M1); `doctor`
+  // leaves — the doctor's own or edited entries (console flips source to "doctor" on edit) — carry no evidence
+  // and pass through. The transcript is redacted exactly as /fill redacted it, so the original quotes match.
+  // catalog_item_unknown is not a grounding fault (prepare() already validated the catalog), so it is ignored.
+  const hasAiLeaf = (n: unknown): boolean =>
+    Array.isArray(n) ? n.some(hasAiLeaf) : typeof n === "object" && n !== null ? (n as { source?: unknown }).source === "ai" || Object.values(n).some(hasAiLeaf) : false;
+  const reanchorAiLeaves = async (env: Env, consult: ConsultRow, body: ApprovedConsult): Promise<string[]> => {
+    const { results: stored } = await env.DB.prepare("SELECT idx, speaker, text FROM transcript_segments WHERE consult_id = ?1 ORDER BY idx ASC")
+      .bind(consult.id)
+      .all<{ idx: number; speaker: string; text: string }>();
+    const owner = (await env.DB.prepare("SELECT k.name, k.email FROM appointments a JOIN contacts k ON k.id = a.contact_id WHERE a.id = ?1").bind(consult.appointment_id).first<{ name: string | null; email: string | null }>()) ?? { name: null, email: null };
+    const segments = stored.map((s) => ({ idx: s.idx, speaker: s.speaker, text: redactOwner(s.text, owner) }));
+    const { report } = validateGrounding(body as Parameters<typeof validateGrounding>[0], segments, new Set());
+    return report.discarded.filter((d) => d.reason !== "catalog_item_unknown").map((d) => d.path);
+  };
 
   /** Parses + prices the approved body. Returns a Response on any refusal (422/400). */
   async function prepare(c: { env: Env; req: { header: (n: string) => string | undefined; text: () => Promise<string> } }, consult: ConsultRow) {
@@ -189,6 +209,15 @@ export function approveRoutes(deps: Deps, paypalFor: (env: Env) => PayPalClient 
     const p = await prepare(c, consult);
     if ("error" in p) return c.json(p, p.status);
     const { body, bill, raw } = p;
+    // M2: AI evidence requires a real transcription, and must still ground against the STORED transcript.
+    // A consult that never reached `transcribed`/`drafted` has no segments, so any ai leaf there is fabricated;
+    // manual approval (every leaf `doctor`) stays allowed in any state.
+    if (hasAiLeaf(body) && consult.status !== "transcribed" && consult.status !== "drafted") return c.json({ error: `consult is ${consult.status}` }, 409);
+    const ungrounded = await reanchorAiLeaves(env, consult, body);
+    if (ungrounded.length) {
+      log("approve_ai_ungrounded", { consult_id: consult.id, paths: ungrounded.slice(0, 10).join(",") });
+      return c.json({ error: "ai_leaf_ungrounded", paths: ungrounded.slice(0, 10) }, 422);
+    }
     if (bill.balanceCents > intVar(env.MAX_CHARGE_CENTS, 0)) return c.json({ error: "balance over cap" }, 422);
     // Owner links must be absolute. PayPal is NOT needed here: the approval never waits on it (M6-b).
     if (!env.PUBLIC_BASE_URL) {
@@ -205,7 +234,10 @@ export function approveRoutes(deps: Deps, paypalFor: (env: Env) => PayPalClient 
 
     // Content first (slow calls), then ONE atomic batch. A lost race leaves orphan R2 objects
     // under an approval_id nobody references — harmless. The explanation is stored, not sent.
-    const explanation = await plainExplanation(deps.fetch, env.ANTHROPIC_API_KEY, body, consult.id);
+    // m4: the owner explanation calls the model, so it goes through the subscription gate too; no active
+    // subscription ⇒ the fixed template (no AI), the approval itself never blocked.
+    const aiKey = (await aiGate(env)) === "ok" ? env.ANTHROPIC_API_KEY : undefined;
+    const explanation = await plainExplanation(deps.fetch, aiKey, body, consult.id);
     // Second barrier before the column CHECK: a visible refusal, never a 500 from the batch.
     if (explanation.text.length > MAX_EXPLANATION_CHARS) return c.json({ error: "explanation too long" }, 422);
     const header = await putReport(env, consult, approvalId, body, null, explanation.source === "ai", now.toISOString());

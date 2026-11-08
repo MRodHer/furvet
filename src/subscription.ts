@@ -5,7 +5,7 @@ import { z } from "zod";
 import type { Env } from "./env";
 import { valueToCents } from "./money";
 import { redactWebhook } from "./ledger";
-import { log } from "./log";
+import { errName, log } from "./log";
 
 /** Demo plan price: $999.00 MXN a month. Mirrors the PayPal plan; the client never sends an amount. */
 export const SUBSCRIPTION_PRICE_CENTS = 99900;
@@ -46,6 +46,22 @@ export const PENDING_TTL_MS = 30 * 60_000;
 /** Throws when D1 fails: the caller denies (503), never passes. */
 export async function isSubscriptionActive(env: Env): Promise<boolean> {
   return (await currentSubscription(env.DB))?.state === "active";
+}
+
+/**
+ * The AI cost gate — the clinic pays for the model, so EVERY model call goes through it (m4): "ok" → the
+ * model may be called; "required" → no active subscription; "error" → the store check failed. Fail-closed:
+ * anything but "ok" denies the model. /fill maps required→402 and error→503; routes that have a non-AI
+ * fallback (/approve → fixed template, /audio → unlabeled speakers) just skip the model on anything but "ok".
+ */
+export async function aiGate(env: Env): Promise<"ok" | "required" | "error"> {
+  if (!subscriptionRequired(env)) return "ok";
+  try {
+    return (await isSubscriptionActive(env)) ? "ok" : "required";
+  } catch (e) {
+    log("subscription_check_failed", { error: errName(e) });
+    return "error";
+  }
 }
 
 export function eventInsert(db: D1Database, subscriptionId: string, kind: EventKind, state: SubscriptionState | null, eventId: string | null, amountCents: number | null, currency: string | null, nextBillingAt: string | null, raw: string) {

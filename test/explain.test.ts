@@ -17,6 +17,8 @@ describe("plain explanation (V14, V8)", () => {
     expect(explanationViolations("amoxicilina 250 mg cada 7 h por 12 días", facts)).toEqual(["cada 7 h", "12 días"]);
     expect(explanationViolations("tome 50 mg", facts)).toEqual(["50", "50 mg"]);
     expect(explanationViolations("también metronidazol como indicó", facts)).toEqual(["metronidazol"]);
+    // M3: a pill/spoonful/dose COUNT the owner is told to give must match the rx, not just be a number somewhere in the JSON.
+    expect(explanationViolations("Dele 12 pastillas y 7 comprimidos; 12 cucharadas al día.", facts)).toEqual(["12 pastillas", "7 comprimidos", "12 cucharadas"]);
     expect(JSON.stringify(facts)).not.toContain("catalog_item_id");
     // Length cap: the stored column is bounded, so an over-long text is a violation (→ retry → template).
     expect(explanationViolations("bien. ".repeat(260), facts)).toEqual(["too_long"]);
@@ -75,7 +77,7 @@ describe("plain explanation (V14, V8)", () => {
     const sent = JSON.stringify(req.messages);
     expect(sent).not.toMatch(/price|precio|cents|amount|\$/i);
     expect(sent).not.toContain("segment_ids");
-    expect(sent).not.toContain("dicho en consulta");
+    expect(sent).not.toContain("1 o 2 cajas"); // a fragment that lives only in the leaf quote, never in a value
     expect(req.tool_choice).toEqual({ type: "tool", name: "plain_explanation" });
   });
 

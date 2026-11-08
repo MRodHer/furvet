@@ -168,9 +168,9 @@ run_mutant "a sale resurrects a cancelled subscription" src/subscription.ts \
 run_mutant "SUBSCRIPTION_REQUIRED default flips to OFF" src/subscription.ts \
   's/return env.SUBSCRIPTION_REQUIRED !== "false";/return env.SUBSCRIPTION_REQUIRED === "true";/' test/subscription.test.ts || status=1
 run_mutant "AI gate removed from /fill" src/routes/consults.ts \
-  's/if (subscriptionRequired(env)) {/if (false) {/' test/subscription.test.ts || status=1
+  's/if (gate === "required") {/if (false) {/' test/subscription.test.ts || status=1
 run_mutant "AI gate passes when the subscription store fails" src/routes/consults.ts \
-  's/return c.json({ error: "subscription check unavailable" }, 503);/active = true;/' test/subscription.test.ts || status=1
+  's/if (gate === "error") return c.json({ error: "subscription check unavailable" }, 503);//' test/subscription.test.ts || status=1
 run_mutant "/start body accepts extra keys (plan_id from the client)" src/routes/subscription.ts \
   's/const StartBody = z.object({}).strict();/const StartBody = z.object({});/' test/subscription.test.ts || status=1
 run_mutant "approve link checked by protocol only (look-alike host passes)" src/routes/subscription.ts \
@@ -293,6 +293,22 @@ run_mutant "numeral counts without adjacency to the unit: «un poquito de tablet
   's#NUMERAL_UNIT_RE.test(v)#/\\b(un|una|dos)\\b/i.test(v)#' test/grounding.test.ts || status=1
 run_mutant "food legend printed for every drug, not only antibiotics/NSAIDs (rx-vet-format)" src/reports/render.ts \
   's/if (withFood(v(m.medicamento)))/if (true)/' test/rx_layout.test.ts || status=1
+run_mutant "/console.html served without the doctor credential: notFound serves it as a static asset (audit M4)" src/app.ts \
+  '\#app.get("/console.html", doctorAuth#d' test/console_auth.test.ts || status=1
+run_mutant "prescription/vaccine leaf anchors on a non-doctor segment: owner-spoken drug passes grounding (audit M1)" src/clinical/grounding.ts \
+  's/DOCTOR_ONLY.test(path) &&/false \&\&/' test/grounding.test.ts || status=1
+run_mutant "/approve stops re-anchoring AI leaves: a fabricated quote is stored as AI evidence (audit M2)" src/routes/approve.ts \
+  's/if (ungrounded.length) {/if (false) {/' test/approve.test.ts || status=1
+run_mutant "/approve drops the state gate: AI leaves accepted on a never-transcribed consult (audit M2)" src/routes/approve.ts \
+  's/hasAiLeaf(body) && consult.status/false \&\& consult.status/' test/approve.test.ts || status=1
+run_mutant "explanation dose units narrowed again: «12 pastillas» passes unchecked against the rx (audit M3)" src/reports/explain.ts \
+  's/|pastillas?//' test/explain.test.ts || status=1
+run_mutant "/audio stops syncing a late owner consent: recording stays blocked forever (audit m3)" src/routes/consults.ts \
+  's/await syncOwnerConsent(env, id.data);//' test/audio.test.ts || status=1
+run_mutant "/approve calls the model without the subscription gate (cost leak) (audit m4)" src/routes/approve.ts \
+  's/(await aiGate(env)) === "ok" ? env.ANTHROPIC_API_KEY : undefined/env.ANTHROPIC_API_KEY/' test/approve.test.ts || status=1
+run_mutant "/audio labels speakers without the subscription gate (cost leak) (audit m4)" src/routes/consults.ts \
+  's/ && (await aiGate(env)) === "ok"//' test/audio.test.ts || status=1
 run_mutant "in-flight flag never released: the button stays locked and the retry is dead (B1)" public/console.js \
   's/^    sending = false;$/    void 0;/' test/frontend_audit.test.ts || status=1
 run_mutant "retry fires for a pending audio of another consult (B1)" public/console.js \

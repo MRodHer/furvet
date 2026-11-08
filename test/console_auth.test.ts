@@ -2,7 +2,7 @@ import { env } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
 import { DOCTOR_AUTH, makeApp, withEnv } from "./helpers";
 
-const GUARDED = ["/console", "/api/v1/consults/appointments", "/api/v1/consults/00000000-0000-4000-8000-000000000000", "/api/v1/subscription"];
+const GUARDED = ["/console", "/console.html", "/api/v1/consults/appointments", "/api/v1/consults/00000000-0000-4000-8000-000000000000", "/api/v1/subscription"];
 
 describe("doctor console auth (V16, D.7)", () => {
   it("V16: empty credential → 503 on every guarded route (fail-closed, even with a valid header)", async () => {

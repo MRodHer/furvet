@@ -3,11 +3,11 @@ import { checkField, incompleteMedications, numbersIn, validateGrounding } from 
 import { ConsultDraft } from "../src/clinical/schema";
 
 const SEGS = [
-  { idx: 0, text: "Buenas tardes, ¿qué le pasa a Firulais?" },
-  { idx: 1, text: "Desde ayer no quiere comer y está muy decaído." },
-  { idx: 2, text: "Tiene 39.5 grados de temperatura, la frecuencia cardíaca está en 120 y pesa 12,4 kilos." },
-  { idx: 3, text: "Le vamos a dar amoxicilina 250 mg cada 12 horas durante 7 días." },
-  { idx: 4, text: "Tiene fiebre y hay que vigilarlo." },
+  { idx: 0, text: "Buenas tardes, ¿qué le pasa a Firulais?", speaker: "doctor" },
+  { idx: 1, text: "Desde ayer no quiere comer y está muy decaído.", speaker: "owner" },
+  { idx: 2, text: "Tiene 39.5 grados de temperatura, la frecuencia cardíaca está en 120 y pesa 12,4 kilos.", speaker: "doctor" },
+  { idx: 3, text: "Le vamos a dar amoxicilina 250 mg cada 12 horas durante 7 días.", speaker: "doctor" },
+  { idx: 4, text: "Tiene fiebre y hay que vigilarlo.", speaker: "doctor" },
 ];
 const segs = new Map(SEGS.map((s) => [s.idx, s.text]));
 const g = (value: unknown, quote: string, ids = [2]) => ({ value, segment_ids: ids, quote });
@@ -74,6 +74,33 @@ describe("grounding validator (V4, V5, V6)", () => {
       ]),
     );
     expect(report.incomplete_medications).toEqual([{ index: 0, missing: ["frecuencia", "duracion"] }]);
+  });
+
+  it("M1: a prescription or vaccine leaf may anchor ONLY on doctor segments; an owner- or unknown-spoken one is discarded as quote_not_by_doctor (fail-closed)", () => {
+    const segsM1 = [
+      { idx: 0, text: "En casa le daba ibuprofeno 400 mg cada 8 horas.", speaker: "owner" }, // owner's history at home
+      { idx: 1, text: "Le vamos a dar amoxicilina 250 mg cada 12 horas durante 7 días.", speaker: "doctor" },
+      { idx: 2, text: "Aplicamos la vacuna triple felina, lote AB12.", speaker: "unknown" }, // unlabeled → not the doctor
+    ];
+    const draft = draftWith({
+      prescription: [
+        { medicamento: g("ibuprofeno", "ibuprofeno 400 mg", [0]), dosis: g("400 mg", "ibuprofeno 400 mg", [0]) }, // owner-spoken → dropped
+        { medicamento: g("amoxicilina", "amoxicilina 250 mg", [1]), dosis: g("250 mg", "amoxicilina 250 mg", [1]) }, // doctor → kept
+      ],
+      vaccines: [{ vacuna: g("triple felina", "vacuna triple felina", [2]) }], // unknown speaker → dropped
+    });
+    const { body, report } = validateGrounding(draft, segsM1, new Set());
+    expect(body.prescription.map((m) => (m.medicamento as { value: string }).value)).toEqual(["amoxicilina"]);
+    expect(body.vaccines[0]).toEqual({}); // the only grounded field was dropped
+    expect(report.discarded).toEqual(
+      expect.arrayContaining([
+        { path: "prescription[0].medicamento", reason: "quote_not_by_doctor", quote: "ibuprofeno 400 mg" },
+        { path: "prescription[0].dosis", reason: "quote_not_by_doctor", quote: "ibuprofeno 400 mg" },
+        { path: "vaccines[0].vacuna", reason: "quote_not_by_doctor", quote: "vacuna triple felina" },
+      ]),
+    );
+    // A clean leaf under any other path (not prescription/vaccines) is unaffected by the speaker rule.
+    expect(validateGrounding(draftWith({ subjective: { motivo_consulta: g("no quiere comer", "no quiere comer", [0]) } }), [{ idx: 0, text: "no quiere comer", speaker: "owner" }], new Set()).body.subjective.motivo_consulta).toBeTruthy();
   });
 
   it("V6: a medication needs a quantity + unit in the dose, and a number + unit in frequency and duration", () => {
