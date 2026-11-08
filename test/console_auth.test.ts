@@ -53,3 +53,23 @@ describe("console: automatic AI draft after transcription (encargo fix-movil ít
     expect(js).toContain('const aiAllowed = () => !subscription.required || subscription.status === "active";');
   });
 });
+
+describe("console: collapsible cards for the phone (encargo fix-consola-secciones-plegables)", () => {
+  it("CF1: every card is a <details open> whose title is its <summary><h2>; the recording state lives in the summary", async () => {
+    const { app } = makeApp({});
+    const html = await (await app.request("/console", { headers: DOCTOR_AUTH }, env)).text();
+    const cards = html.match(/<details class="card[^>]*>/g) ?? [];
+    expect(cards).toHaveLength(7);
+    for (const tag of cards) expect(tag, tag).toMatch(/ open>$/); // desktop: everything open; the phone folds by script
+    expect(html.match(/<summary><h2 id="h-[a-z]+">/g)).toHaveLength(7);
+    expect(html).not.toContain("<section");
+    expect(html).toMatch(/<summary><h2 id="h-rec">3\. Grabación<\/h2> <span><span class="rec" id="recDot"[^]*?<span id="timer">00:00<\/span><\/span><\/summary>/);
+  });
+  it("CF2: console.js folds only on a narrow screen, never on a desktop (pin on the served script; browser behaviour measured by hand)", async () => {
+    const js = await (await env.ASSETS.fetch(new Request("https://furvet.test/console.js"))).text();
+    expect(js).toContain('const narrow = matchMedia("(max-width: 639px)");');
+    expect(js).toContain("if (!narrow.matches) return;");
+    expect(js.match(/focusSection\(/g)).toHaveLength(3); // definition, initial card, the flow in refresh — nothing else moves the doctor around
+    expect(js).not.toMatch(/recorder\.stop\(\)[^\n]*toggle|toggle[^\n]*recorder/); // folding never reaches the recorder
+  });
+});

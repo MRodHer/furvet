@@ -199,4 +199,6 @@ run_mutant "two drafts may run at once (click during the automatic one)" public/
   's/if (drafting) return;/if (false) return;/' test/console_auth.test.ts || status=1
 run_mutant "payment_pending ignores the ledger status (chat would poll forever after capture)" src/routes/sim.ts \
   "s/ AND COALESCE(status, 'created') NOT IN ('captured', 'amount_mismatch', 'denied')//" test/sim.test.ts || status=1
+run_mutant "console folds cards on a desktop too (narrow gate removed)" public/console.js \
+  's/if (!narrow.matches) return;/if (false) return;/' test/console_auth.test.ts || status=1
 exit $status
