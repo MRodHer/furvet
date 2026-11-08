@@ -214,4 +214,10 @@ async function recordAndSettle(
     );
   }
   await env.DB.batch(stmts);
+  if (status === "captured" && charge.kind === "deposit" && charge.appointment_id) {
+    // A deposit paid after the lazy release (tools.ts releaseStale) lands on a cancelled appointment: the money is
+    // in the ledger but nothing was confirmed. Ids and enums only, so the clinic can find it in /cobros.
+    const appt = await env.DB.prepare("SELECT status FROM appointments WHERE id = ?1").bind(charge.appointment_id).first<{ status: string }>().catch(() => null);
+    if (appt && appt.status !== "confirmed") log("deposit_captured_late", { charge_id: charge.id, appointment_id: charge.appointment_id, appointment_status: appt.status });
+  }
 }

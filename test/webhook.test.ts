@@ -197,6 +197,22 @@ describe("PayPal webhook (E1-E4, E6, E14, D.1)", () => {
     expect(await events("status = 'captured'")).toBe(0);
   });
 
+  it("M3: a deposit captured for a cancelled (lazily released) appointment is logged as late, confirms nothing and says nothing", async () => {
+    const { chargeId, orderId, apptStatus, appt, botMsgs } = await seedDeposit();
+    await env.DB.prepare("UPDATE appointments SET status = 'cancelled' WHERE id = ?1").bind(appt).run();
+    const logs = captureLogs();
+    restore = logs.restore;
+    const { app } = makeApp(paypalFakes());
+    expect(await (await post(app, captureCompletedEvent("WH-M3", "CAP-M3", chargeId, "200.00", "MXN", orderId))).json()).toEqual({ status: "captured" });
+    expect(await apptStatus()).toBe("cancelled");
+    expect(await botMsgs()).toBe(0);
+    const late = logs.lines.filter((l) => l.includes("deposit_captured_late"));
+    expect(late).toHaveLength(1);
+    expect(late[0]).toContain(chargeId);
+    expect(late[0]).toContain('"appointment_status":"cancelled"');
+    assertNoPii(logs.lines);
+  });
+
   it("unknown event types are acknowledged and ignored", async () => {
     const { app } = makeApp(paypalFakes());
     const res = await post(app, { id: "WH-12", event_type: "CUSTOMER.DISPUTE.CREATED", resource: {} }); // subscription events have their own suite now
