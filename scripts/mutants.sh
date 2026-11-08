@@ -301,4 +301,6 @@ run_mutant "/approve stops re-anchoring AI leaves: a fabricated quote is stored 
   's/if (ungrounded.length) {/if (false) {/' test/approve.test.ts || status=1
 run_mutant "/approve drops the state gate: AI leaves accepted on a never-transcribed consult (audit M2)" src/routes/approve.ts \
   's/hasAiLeaf(body) && consult.status/false \&\& consult.status/' test/approve.test.ts || status=1
+run_mutant "explanation dose units narrowed again: «12 pastillas» passes unchecked against the rx (audit M3)" src/reports/explain.ts \
+  's/|pastillas?//' test/explain.test.ts || status=1
 exit $status

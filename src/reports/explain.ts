@@ -15,7 +15,10 @@ const TOOL = {
 };
 const Out = z.object({ text: z.string().min(1).max(2000) }).strict();
 // Tokens that must appear VERBATIM inside the prescription (not just "somewhere in the JSON").
-const DOSE_RE = /\d+(?:[.,]\d+)?\s*(?:mg\/kg|mg|ml|mcg|ui|g|gotas?|tabletas?)\b|\bcada\s+\d+\s*(?:h|horas?|d[ií]as?)\b|\b\d+\s*(?:d[ií]as?|semanas?|horas?)\b/gi;
+// Owner-facing dose units, widened beyond mg/ml so a COUNT of pills/capsules/spoonfuls/doses the owner is
+// told to give («12 pastillas», «7 comprimidos», «12 cucharadas») is also checked verbatim against the rx —
+// otherwise the number alone (already somewhere in the JSON) let it pass unbacked (audit M3).
+const DOSE_RE = /\d+(?:[.,]\d+)?\s*(?:mg\/kg|mg|ml|mcg|ui|g|gotas?|tabletas?|pastillas?|comprimidos?|c[aá]psulas?|cucharad(?:as?|itas?)|dosis|veces|aplicaciones?|unidades?)\b|\bcada\s+\d+\s*(?:h|horas?|d[ií]as?)\b|\b\d+\s*(?:d[ií]as?|semanas?|horas?)\b/gi;
 // A cheap drug-name detector: common pharmacological suffixes. Any such word must be a prescribed medication.
 const DRUG_RE = /\b[a-záéíóú]{3,}(?:cilina|micina|ciclina|azol|prazol|oxacino|profeno|sona|mectina|cam|zepam|cilinas)\b/gi;
 const SYSTEM = `Explicas al dueño de una mascota, en español mexicano sencillo y cálido, lo que el médico veterinario aprobó.
