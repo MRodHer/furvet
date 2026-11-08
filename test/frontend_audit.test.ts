@@ -7,6 +7,14 @@ const served = async (path: string) => (await env.ASSETS.fetch(new Request(`http
 
 const msgs = (n: number) => Array.from({ length: n }, (_, i) => ({ id: i + 1, direction: i % 2 ? "outbound" : "inbound", text: `m${i + 1}` }));
 const tick = () => new Promise((r) => setTimeout(r, 0));
+// Order pin that cannot pass by absence: indexOf(-1) < anything would silently accept a removed anchor.
+const before = (hay: string, a: string, b: string) => {
+  const i = hay.indexOf(a);
+  const j = hay.indexOf(b);
+  expect(i).toBeGreaterThan(-1);
+  expect(j).toBeGreaterThan(-1);
+  expect(i).toBeLessThan(j);
+};
 
 describe("frontend audit, lane C (public/* only)", () => {
   it("F1 (B1): a failed audio upload keeps the blob in memory and turns the button into «Reintentar envío»; the blob is dropped only after res.ok, a 409 (already transcribed) or a 404/413/415 (never succeeds)", async () => {
@@ -15,7 +23,10 @@ describe("frontend audit, lane C (public/* only)", () => {
     expect(js).toContain("pending = { id, blob };");
     expect(js).toContain('$("recBtn").textContent = keep ? "Reintentar envío" : "Grabar"; $("recBtn").disabled = false;');
     // The retry path comes BEFORE the microphone is asked for.
-    expect(js.indexOf("if (pending && pending.id === consultId) { await upload(pending.id, pending.blob); return; }")).toBeLessThan(js.indexOf("navigator.mediaDevices.getUserMedia"));
+    before(js, "if (pending && pending.id === consultId) { await upload(pending.id, pending.blob); return; }", "navigator.mediaDevices.getUserMedia");
+    // The in-flight flag is released right after the POST, before any branch: otherwise the button stays locked and the retry is dead.
+    before(js, "    sending = false;\n    if (res.status === 409 && data.error === \"this consult already has a transcript\") {", "if (!res.ok) {\n      // 404/413/415 never succeed");
+    expect(js.match(/^    sending = false;$/gm)).toHaveLength(1);
     // One POST in flight: refresh() cannot re-enable the button while the server still says «recording».
     expect(js).toContain("async function upload(id, blob) {\n    if (sending) return;\n    sending = true;\n    pending = { id, blob };");
     expect(js).toContain('$("recBtn").disabled = sending || !(consult.owner_consent_at');
@@ -23,8 +34,8 @@ describe("frontend audit, lane C (public/* only)", () => {
     // 409 = the server already has the transcript: drop the blob and refresh, before the generic failure branch.
     const notOk = js.indexOf("if (!res.ok) {\n      // 404/413/415 never succeed");
     expect(notOk).toBeGreaterThan(0);
-    expect(js).toContain('if (res.status === 409) {\n      // The first POST landed');
-    expect(js.indexOf("if (res.status === 409) {")).toBeLessThan(notOk);
+    expect(js).toContain('if (res.status === 409 && data.error === "this consult already has a transcript") {\n      // The first POST landed');
+    before(js, 'if (res.status === 409 && data.error === "this consult already has a transcript") {', "if (!res.ok) {\n      // 404/413/415 never succeed");
     expect(js).toContain('pending = null;\n      setStatus("El audio ya estaba transcrito.", "ok");\n      await refresh();\n      return;');
     expect(js).toContain("const keep = ![404, 413, 415].includes(res.status);\n      if (!keep) pending = null;");
     // The unconditional drop happens only after the failure branch returned.
@@ -113,7 +124,7 @@ describe("frontend audit, lane C (public/* only)", () => {
     const html = await (await app.request("/console", { headers: DOCTOR_AUTH }, env)).text();
     const statusAt = html.indexOf('<div id="status" aria-live="polite"></div>');
     expect(statusAt).toBeGreaterThan(0);
-    expect(statusAt).toBeLessThan(html.indexOf("<details")); // before the first card: visible whatever is folded or hidden
+    before(html, '<div id="status" aria-live="polite"></div>', "<details"); // before the first card: visible whatever is folded or hidden
     expect(html.match(/id="status"/g)).toHaveLength(1);
     expect(html).toContain("@media (max-width: 639px) { .sys { grid-template-columns: 1fr 1fr; } .sys > span, .sys .field:last-child { grid-column: 1 / -1; } }");
     expect(html).toContain("@media (pointer: coarse) { .seg .who, button.link { min-height: 44px; padding: 10px 12px; } }");

@@ -276,7 +276,7 @@ run_mutant "console #status back inside the hidden recording card (errors invisi
 run_mutant "paypal-return sends the owner to the Basic-Auth board again (M6)" public/paypal-return.html \
   's|<p><a href="/sim.html">Volver al chat</a></p>|<p><a href="/sim.html">Volver al chat</a> · <a href="/cobros.html">Ver tablero de cobros</a></p>|' test/frontend_audit.test.ts || status=1
 run_mutant "a 409 (consult already transcribed) is treated as a failure: the retry loops forever (B1)" public/console.js \
-  's/if (res.status === 409) {/if (res.status === 40900) {/' test/frontend_audit.test.ts || status=1
+  's/if (res.status === 409 \&\& data.error/if (res.status === 40900 \&\& data.error/' test/frontend_audit.test.ts || status=1
 run_mutant "second POST of the same audio while the first is in flight (B1)" public/console.js \
   's/^    if (sending) return;$/    if (false) return;/' test/frontend_audit.test.ts || status=1
 run_mutant "A's form stays clickable while B loads: «Aprobar» would hit the wrong consult (M1)" public/console.js \
@@ -293,4 +293,10 @@ run_mutant "numeral counts without adjacency to the unit: «un poquito de tablet
   's#NUMERAL_UNIT_RE.test(v)#/\\b(un|una|dos)\\b/i.test(v)#' test/grounding.test.ts || status=1
 run_mutant "food legend printed for every drug, not only antibiotics/NSAIDs (rx-vet-format)" src/reports/render.ts \
   's/if (withFood(v(m.medicamento)))/if (true)/' test/rx_layout.test.ts || status=1
+run_mutant "in-flight flag never released: the button stays locked and the retry is dead (B1)" public/console.js \
+  's/^    sending = false;$/    void 0;/' test/frontend_audit.test.ts || status=1
+run_mutant "retry fires for a pending audio of another consult (B1)" public/console.js \
+  's/if (pending \&\& pending.id === consultId) { await upload/if (pending) { await upload/' test/frontend_audit.test.ts || status=1
+run_mutant "any 409 drops the audio, also the one for missing consent (B1 defense in depth)" public/console.js \
+  's/if (res.status === 409 \&\& data.error === "this consult already has a transcript") {/if (res.status === 409) {/' test/frontend_audit.test.ts || status=1
 exit $status
