@@ -318,3 +318,86 @@ describe("AI gate on /fill (S14–S16)", () => {
     for (const v of [undefined, "", "0", "no", "FALSE", "true"]) expect((await fill(app, withEnv({ SUBSCRIPTION_REQUIRED: v }))).status, String(v)).toBe(402);
   });
 });
+
+// Measured in sandbox (2026-11-08, event WH-9S04…): Subscriptions v1 writes ONE decimal in
+// billing_info.last_payment.amount.value ("999.0"). The strict two-decimal parser threw inside the schema
+// try, so a real CANCELLED (and the ACTIVATED after the first charge) answered 200 `invalid_resource`
+// and wrote nothing; the clinic kept its AI gate open after cancelling. Shapes below mirror the real
+// resource (no buyer e-mail).
+describe("clinic subscription — real sandbox money format (S18)", () => {
+  let restore: (() => void) | null = null;
+  afterEach(() => restore?.());
+  const real = (id: string, type: "ACTIVATED" | "CANCELLED", subId: string, value: string, currency = "MXN") => ({
+    id, event_type: `BILLING.SUBSCRIPTION.${type}`, create_time: "2026-11-08T19:50:00Z", resource_type: "subscription", summary: `Subscription ${type.toLowerCase()}`,
+    resource: {
+      id: subId, plan_id: PLAN, status: type === "ACTIVATED" ? "ACTIVE" : "CANCELLED", status_update_time: "2026-11-08T19:50:00Z", start_time: "2026-11-08T19:36:43Z", quantity: "1",
+      shipping_amount: { currency_code: currency, value: "0.0" }, subscriber: { name: { given_name: "Val", surname: "Demo" }, shipping_address: { address: { country_code: "MX" } } },
+      billing_info: {
+        outstanding_balance: { currency_code: currency, value: "0.0" },
+        cycle_executions: [{ tenure_type: "REGULAR", sequence: 1, cycles_completed: 1, cycles_remaining: 0, current_pricing_scheme_version: 1, total_cycles: 0 }],
+        last_payment: { amount: { currency_code: currency, value }, time: "2026-11-08T19:41:46Z" },
+        ...(type === "ACTIVATED" ? { next_billing_time: "2026-12-08T10:00:00Z" } : {}),
+        failed_payments_count: 0,
+      },
+      create_time: "2026-11-08T19:36:43Z", update_time: "2026-11-08T19:50:00Z", plan_overridden: false, links: [],
+    },
+  });
+
+  it("S18a: real CANCELLED with last_payment 999.0 over an active subscription → cancelled row, gate closed", async () => {
+    const { id, paypalId } = await seedSubscription("active");
+    const logs = captureLogs();
+    restore = logs.restore;
+    const { app } = makeApp(paypalFakes());
+    expect(await (await post(app, WEBHOOK, real("WH-S18a", "CANCELLED", paypalId, "999.0"))).json()).toEqual({ status: "cancelled" });
+    expect(await stateOf(id)).toBe("cancelled");
+    expect(await events(id, "paypal_event_id = 'WH-S18a' AND kind = 'cancelled' AND state = 'cancelled' AND amount_cents = 99900 AND currency = 'MXN'")).toBe(1);
+    expect((await fill(app)).status).toBe(402);
+    expect(logs.lines.join("\n")).not.toContain("invalid_resource");
+    assertNoPii(logs.lines);
+  });
+
+  it("S18b: real ACTIVATED with 999.0 MXN from approval_pending → activated, 99900 stored", async () => {
+    const { id, paypalId } = await seedSubscription("approval_pending");
+    const { app } = makeApp(paypalFakes());
+    expect(await (await post(app, WEBHOOK, real("WH-S18b", "ACTIVATED", paypalId, "999.0"))).json()).toEqual({ status: "activated" });
+    expect(await stateOf(id)).toBe("active");
+    expect(await events(id, "paypal_event_id = 'WH-S18b' AND kind = 'activated' AND amount_cents = 99900 AND next_billing_at = '2026-12-08T10:00:00Z'")).toBe(1);
+  });
+
+  it("S18c: ACTIVATED with 999.5 MXN or 999.0 USD → amount_mismatch, never active", async () => {
+    const { id, paypalId } = await seedSubscription("approval_pending");
+    const { app } = makeApp(paypalFakes());
+    expect(await (await post(app, WEBHOOK, real("WH-S18c1", "ACTIVATED", paypalId, "999.5"))).json()).toEqual({ status: "amount_mismatch" });
+    expect(await (await post(app, WEBHOOK, real("WH-S18c2", "ACTIVATED", paypalId, "999.0", "USD"))).json()).toEqual({ status: "amount_mismatch" });
+    expect(await events(id, "kind = 'amount_mismatch' AND state IS NULL")).toBe(2);
+    expect(await stateOf(id)).toBe("approval_pending");
+  });
+
+  it("S18d: unreadable amounts (999, 999.000, text, 99900) never activate and never block a cancellation; own log line, no invalid_resource", async () => {
+    const logs = captureLogs();
+    restore = logs.restore;
+    const { app } = makeApp(paypalFakes());
+    for (const [i, bad] of ["999", "999.000", "nine", "99900", "-999.0", "1e3"].entries()) {
+      const a = await seedSubscription("approval_pending");
+      expect(await (await post(app, WEBHOOK, real(`WH-S18d-a${i}`, "ACTIVATED", a.paypalId, bad))).json(), bad).toEqual({ status: "amount_mismatch" });
+      expect(await stateOf(a.id), bad).toBe("approval_pending");
+      expect(await events(a.id, `paypal_event_id = 'WH-S18d-a${i}' AND kind = 'amount_mismatch' AND state IS NULL AND amount_cents IS NULL`), bad).toBe(1);
+      const c = await seedSubscription("active");
+      expect(await (await post(app, WEBHOOK, real(`WH-S18d-c${i}`, "CANCELLED", c.paypalId, bad))).json(), bad).toEqual({ status: "cancelled" });
+      expect(await stateOf(c.id), bad).toBe("cancelled");
+    }
+    expect(logs.lines.filter((l) => l.includes("subscription_webhook_amount_unreadable")).length).toBe(12);
+    expect(logs.lines.join("\n")).not.toContain("invalid_resource");
+    assertNoPii(logs.lines);
+  });
+
+  it("S18e: PAYMENT.SALE.COMPLETED with an unreadable total → amount_mismatch row, not active; 999.0 total still pays", async () => {
+    const { id, paypalId } = await seedSubscription("approval_pending");
+    const { app } = makeApp(paypalFakes());
+    expect(await (await post(app, WEBHOOK, sale("WH-S18e1", paypalId, "nine"))).json()).toEqual({ status: "amount_mismatch" });
+    expect(await stateOf(id)).toBe("approval_pending");
+    expect(await events(id, "paypal_event_id = 'WH-S18e1' AND kind = 'amount_mismatch' AND state IS NULL")).toBe(1);
+    expect(await (await post(app, WEBHOOK, sale("WH-S18e2", paypalId, "999.0"))).json()).toEqual({ status: "payment" });
+    expect(await stateOf(id)).toBe("active");
+  });
+});

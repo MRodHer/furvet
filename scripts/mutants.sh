@@ -315,4 +315,12 @@ run_mutant "retry fires for a pending audio of another consult (B1)" public/cons
   's/if (pending \&\& pending.id === consultId) { await upload/if (pending) { await upload/' test/frontend_audit.test.ts || status=1
 run_mutant "any 409 drops the audio, also the one for missing consent (B1 defense in depth)" public/console.js \
   's/if (res.status === 409 \&\& data.error === "this consult already has a transcript") {/if (res.status === 409) {/' test/frontend_audit.test.ts || status=1
+run_mutant "subscription money keeps the strict two-decimal parser: a real 999.0 is unreadable (sandbox cancel lost)" src/subscription.ts \
+  's/valueToCents(ONE_DECIMAL.test(value) ? `${value}0` : value)/valueToCents(value)/' test/subscription.test.ts || status=1
+run_mutant "unreadable amount is treated as our price (activates for free)" src/subscription.ts \
+  's/    log("subscription_webhook_amount_unreadable", { event_id: eventId });/    return { amountCents: 99900, currency };/' test/subscription.test.ts || status=1
+run_mutant "unreadable last_payment turns a CANCELLED back into invalid_resource (deactivation lost)" src/subscription.ts \
+  's/if (lp) paid = moneyOrNull(lp.value, lp.currency_code, event.id);/if (lp) { paid = moneyOrNull(lp.value, lp.currency_code, event.id); if (!paid) return "invalid_resource"; }/' test/subscription.test.ts || status=1
+run_mutant "SALE with an unreadable total throws again (invalid_resource instead of amount_mismatch)" src/subscription.ts \
+  's/paid = moneyOrNull(r.amount.total, r.amount.currency, event.id);/paid = { amountCents: valueToCents(r.amount.total), currency: r.amount.currency };/' test/subscription.test.ts || status=1
 exit $status
