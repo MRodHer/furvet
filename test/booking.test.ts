@@ -400,6 +400,7 @@ describe("booking + deposit tools (E7, E8, E9, V17)", () => {
     it("the agent prompt asks for breed, sex and age in one question and never blocks the booking on them; the tool schema stays closed", () => {
       const prompt = systemPrompt("Clínica X");
       expect(prompt).toMatch(/raza, sexo y edad/);
+      expect(prompt).toMatch(/raza, sexo y edad de la mascota y el nombre del dueño/); // the owner's name rides the same single question, for the rx tutor line
       expect(prompt).toMatch(/nunca retrases ni bloquees la cita/);
       const tool = TOOLS.find((t) => t.name === "book_appointment")!;
       const schema = tool.input_schema as { required: string[]; additionalProperties: boolean; properties: Record<string, unknown> };

@@ -236,4 +236,8 @@ run_mutant "re-sent lookup ignores the slot (returns a confirmed appointment on 
   's/SELECT id FROM appointments WHERE slot_id = ?1 AND conversation_id = ?2/SELECT id FROM appointments WHERE ?1 = ?1 AND conversation_id = ?2/' test/booking.test.ts || status=1
 run_mutant "«audio borrado» label shows the raw UTC instant, not the clinic zone (fix-audio-borrado-label)" public/console.js \
   's/Audio borrado y transcrito · \${clinicTime(consult.transcribed_at)}/Audio borrado y transcrito · \${consult.transcribed_at}/' test/console_auth.test.ts || status=1
+run_mutant "per-take dose relaxation removed: «media tableta» / «un cuarto» no longer count, only digits (rx-vet-format)" src/clinical/grounding.ts \
+  's/QTY_RE.test(v) && DOSE_UNIT_RE.test(v)/numbersIn(v).length > 0 \&\& DOSE_UNIT_RE.test(v)/' test/grounding.test.ts || status=1
+run_mutant "food legend printed for every drug, not only antibiotics/NSAIDs (rx-vet-format)" src/reports/render.ts \
+  's/if (withFood(v(m.medicamento)))/if (true)/' test/rx_layout.test.ts || status=1
 exit $status

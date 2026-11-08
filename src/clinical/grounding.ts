@@ -30,6 +30,12 @@ const RANGES: Record<string, [number, number]> = {
 const DOSE_UNIT_RE = /\b(mg\/kg|mg|ml|ui|mcg|g|miligramos?|mililitros?|microgramos?|gramos?|unidad(?:es)? internacional(?:es)?|gotas?|tabletas?|c[aá]psulas?|comprimidos?)\b/i;
 const FREQ_RE = /\b(cada|c\/|veces|al d[ií]a|diari[oa]|horas?|hrs?|h)\b/i;
 const DURATION_RE = /\b(d[ií]as?|semanas?|meses|mes|horas?)\b/i;
+// Closed, small set of per-take QUANTITIES, all equivalent for validation only (never converted): a digit or
+// decimal (\d covers 1, 0.5, 1/2, 1 1/2), a unicode fraction (½ ¼ ¾ ⅛ …), a fraction word (media/medio/mitad,
+// cuarto(s)/cuartito, octavo(s)/octavito, tercio(s)), or a numeral up to ten (un/uno/una … diez). Anything the
+// transcriber could not have meant as a count — «un poquito», «bastante», «una dosis alta» — carries no token
+// here, so the dose stays incomplete (fail-closed). Shared by the validator; exported for the render if it needs it.
+export const QTY_RE = /(\d|[½¼¾⅓⅔⅛⅜⅝⅞⅕⅖⅗⅘⅙⅚]|\b(?:un|uno|una|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez|medi[oa]|mitad|cuartos?|cuartito|octavos?|octavito|tercios?)\b)/i;
 
 export function numbersIn(s: string): string[] {
   return (s.match(NUMBER_RE) ?? []).map((n) => String(Number(n.replace(",", "."))));
@@ -118,11 +124,20 @@ export function incompleteMedications(body: { prescription: Record<string, unkno
   const out: { index: number; missing: string[] }[] = [];
   body.prescription.forEach((m, index) => {
     const missing: string[] = [];
+    const val = (f: unknown) => (typeof f === "object" && f !== null ? (f as { value?: unknown }).value : undefined);
     const has = (f: unknown, unit: RegExp) => {
-      const v = typeof f === "object" && f !== null ? (f as { value?: unknown }).value : undefined;
+      const v = val(f);
       return typeof v === "string" && numbersIn(v).length > 0 && unit.test(v);
     };
-    if (!has(m.dosis, DOSE_UNIT_RE)) missing.push("dosis");
+    // The per-take amount counts when it names a quantity in ANY recognised form — a digit, a fraction, or a
+    // number word (QTY_RE) — together with a dose unit. So «media tableta», «un cuarto de tableta», «1/2 tableta»
+    // and «250 mg» all pass, while «un poquito» or «una dosis alta» (no unit) and «tableta» (no quantity) do not.
+    // QTY_RE only VALIDATES: the rx prints the doctor's own words, never a converted number.
+    const hasDose = (f: unknown) => {
+      const v = val(f);
+      return typeof v === "string" && QTY_RE.test(v) && DOSE_UNIT_RE.test(v);
+    };
+    if (!hasDose(m.dosis)) missing.push("dosis");
     if (!has(m.frecuencia, FREQ_RE)) missing.push("frecuencia");
     if (!has(m.duracion, DURATION_RE)) missing.push("duracion");
     if (missing.length) out.push({ index, missing });
