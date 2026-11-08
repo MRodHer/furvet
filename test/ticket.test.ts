@@ -1,5 +1,6 @@
 import { env } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
+import { domStub } from "./helpers";
 import type { Bill } from "../src/billing";
 import { buildPdf } from "../src/reports/pdf";
 import { TICKET_COLS, ticketBlocks, ticketChat, ticketLines, ticketPage } from "../src/reports/render";
@@ -95,45 +96,13 @@ describe("sim.js renders fenced blocks as <pre> through textContent", () => {
     expect(js).not.toContain("innerHTML");
     expect(js).toContain('const pre = document.createElement("pre");');
     expect(js).toContain("pre.textContent = chunk;");
-    // Minimal DOM stub: records the tree, throws on innerHTML.
-    type N = { tag: string; children: N[]; textContent: string; [k: string]: unknown };
-    const mk = (tag: string): N => {
-      const n: N = {
-        tag,
-        children: [],
-        textContent: "",
-        value: "",
-        appendChild(c: N) {
-          n.children.push(c);
-          return c;
-        },
-        replaceChildren() {
-          n.children = [];
-        },
-        addEventListener() {},
-        focus() {},
-      };
-      Object.defineProperty(n, "innerHTML", {
-        set() {
-          throw new Error("innerHTML assigned");
-        },
-      });
-      return n;
-    };
-    const log = mk("div");
-    const byId: Record<string, N> = { log };
-    const document = {
-      getElementById: (id: string) => (byId[id] ??= mk(id)),
-      createElement: mk,
-      createTextNode: (t: string) => ({ tag: "#text", children: [], textContent: t }),
-      addEventListener() {},
-      visibilityState: "visible",
-    };
+    const { document, byId } = domStub(); // records the tree, throws on innerHTML
     const payload = `${F}\nConsulta <script>alert(1)</script>\n  1 x $1.00               $1.00\n${F}\nTicket en PDF: https://furvet.test/t/x`;
-    const fetch = async () => ({ ok: true, json: async () => ({ messages: [{ direction: "outbound", text: payload }], consent: null, payment_pending: false }) });
+    const fetch = async () => ({ ok: true, json: async () => ({ messages: [{ id: 1, direction: "outbound", text: payload }], consent: null, payment_pending: false }) });
     const localStorage = { getItem: () => "s", setItem() {} };
     new Function("document", "fetch", "localStorage", "setInterval", "clearInterval", js)(document, fetch, localStorage, () => 0, () => {});
     await new Promise((r) => setTimeout(r, 0)); // load(): fetch → json → render
+    const log = byId.log!;
     expect(log.children).toHaveLength(1);
     const msg = log.children[0]!;
     const pre = msg.children.filter((c) => c.tag === "pre");
@@ -154,7 +123,7 @@ describe("sim.js renders fenced blocks as <pre> through textContent", () => {
     const url = "https://www.sandbox.paypal.com/checkoutnow?token=5O190127TN364715T";
     // The exact shape /charge writes: ticket, /t link, pay line ending with the URL, then the sentence on its own line.
     const text = `${F}\nSALDO                    $488.00\nMXN\n${F}\nTicket en PDF: https://furvet.test/t/x\nPagar saldo ($488.00 MXN): ${url}\nAl pagar recibirás el informe completo.`;
-    const fetch = async () => ({ ok: true, json: async () => ({ messages: [{ direction: "outbound", text }], consent: null, payment_pending: true }) });
+    const fetch = async () => ({ ok: true, json: async () => ({ messages: [{ id: 1, direction: "outbound", text }], consent: null, payment_pending: true }) });
     new Function("document", "fetch", "localStorage", "setInterval", "clearInterval", js)(document, fetch, { getItem: () => "s", setItem() {} }, () => 0, () => {});
     await new Promise((r) => setTimeout(r, 0));
     const anchors = log.children[0]!.children.filter((c) => c.tag === "a");

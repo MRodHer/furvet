@@ -97,19 +97,32 @@
   $("openBtn").addEventListener("click", async () => {
     const opt = $("apptSel").selectedOptions[0];
     if (!opt) return;
-    let id = opt.getAttribute("data-consult");
-    if (!id) {
-      const { ok, data } = await api("", { method: "POST", body: JSON.stringify({ appointment_id: opt.value }) });
-      if (!ok) { setStatus(`No se pudo abrir: ${data.error}`, "err"); return; }
-      id = data.id;
+    if (edited && !confirm("Se perderá lo escrito a mano en el expediente. ¿Abrir otra consulta?")) return;
+    $("openBtn").disabled = true; // one open at a time: two in flight could paint consult A under consultId B
+    try {
+      let id = opt.getAttribute("data-consult");
+      if (!id) {
+        const { ok, data } = await api("", { method: "POST", body: JSON.stringify({ appointment_id: opt.value }) });
+        if (!ok) { setStatus(`No se pudo abrir: ${data.error}`, "err"); return; }
+        id = data.id;
+      }
+      // Nothing of the previous consult stays clickable while the new one loads: «Aprobar» or «Cobrar» in that
+      // interval would send A's form to B. refresh() shows them again from the server's answer.
+      $("work").classList.add("hidden"); $("deliveryCard").classList.add("hidden");
+      consultId = id;
+      await refresh();
+      loadAppointments();
+    } finally {
+      $("openBtn").disabled = false;
     }
-    consultId = id;
-    await refresh();
-    loadAppointments();
   });
 
+  // `id` is pinned on entry (same pattern as requestDraft): a response for a consult that is no longer the open one
+  // is dropped, so the screen never shows A while consultId is B (approve/charge would hit the wrong consult).
   async function refresh() {
-    const { ok, data } = await api(`/${consultId}`);
+    const id = consultId;
+    const { ok, data } = await api(`/${id}`);
+    if (id !== consultId) return;
     if (!ok) { setStatus(`Error al leer la consulta: ${data.error}`, "err"); return; }
     consult = data.consult;
     catalog = data.catalog;
@@ -121,7 +134,8 @@
     $("doctorConsentState").textContent = doctorDone ? "Registrada." : "";
     $("recCard").classList.remove("hidden");
     // Both layers, or the button stays off (the server refuses anyway: 409).
-    $("recBtn").disabled = !(consult.owner_consent_at && doctorDone && consult.status === "recording");
+    $("recBtn").disabled = sending || !(consult.owner_consent_at && doctorDone && consult.status === "recording");
+    $("recBtn").textContent = pending && pending.id === consultId ? "Reintentar envío" : "Grabar";
     // Persistent and true: the audio is never stored (migrations/0002 line 2, transcribe.ts line 3). Once the
     // consult has a transcription, say so on every load — the live "Listo" would otherwise vanish on reload.
     if (consult.transcribed_at) $("recLabel").textContent = `✓ Audio borrado y transcrito · ${clinicTime(consult.transcribed_at)}`;
@@ -137,7 +151,9 @@
   // ---------- 6. delivery: explanation release + balance charge (both one-shot on the server) ----------
   const money = (cents) => `$${(cents / 100).toFixed(2)}`;
   async function renderDelivery() {
-    const { ok, data } = await api(`/${consultId}/delivery`);
+    const id = consultId;
+    const { ok, data } = await api(`/${id}/delivery`);
+    if (id !== consultId) return;
     const show = ok && data.approved;
     $("deliveryCard").classList.toggle("hidden", !show);
     if (!show) return;
@@ -180,7 +196,51 @@
     for (const m of ["audio/webm;codecs=opus", "audio/webm", "audio/ogg;codecs=opus", "audio/mp4"]) if (MediaRecorder.isTypeSupported(m)) return m;
     return "";
   }
+  // A recording the server has not accepted yet: kept in memory only (never stored), re-sent on «Reintentar envío».
+  let pending = null;
+  let sending = false; // one POST in flight: refresh() would re-enable the button while the server is still «recording»
+  async function upload(id, blob) {
+    if (sending) return;
+    sending = true;
+    pending = { id, blob };
+    $("recLabel").textContent = "Enviando…"; $("recBtn").disabled = true;
+    setStatus("Transcribiendo (puede tardar un minuto)…");
+    let res;
+    let data = {};
+    try {
+      res = await fetch(`/api/v1/consults/${id}/audio`, { method: "POST", headers: { "Content-Type": blob.type }, body: blob });
+      try { data = await res.json(); } catch (e) { data = { error: e.name }; }
+    } catch (e) {
+      res = { ok: false, status: 0 };
+      data = { error: `sin conexión (${e.name})` };
+    }
+    sending = false;
+    if (res.status === 409) {
+      // The first POST landed and only its answer was lost: the server already holds the transcript, so the blob is
+      // dropped and the persisted state is painted (a retry would answer 409 forever).
+      pending = null;
+      setStatus("El audio ya estaba transcrito.", "ok");
+      await refresh();
+      return;
+    }
+    if (!res.ok) {
+      // 404/413/415 never succeed on retry (consult gone, too large, empty or unsupported blob): the audio is dropped
+      // and the doctor records again. Anything else keeps the audio: the button becomes the retry.
+      const keep = ![404, 413, 415].includes(res.status);
+      if (!keep) pending = null;
+      setStatus(`No se pudo enviar el audio (${res.status || "red"}): ${data.error || ""}. ${keep ? "El audio sigue en memoria: pulse «Reintentar envío»." : "Grabe de nuevo."}`, "err");
+      $("recLabel").textContent = keep ? "Audio pendiente de envío" : "Audio rechazado"; $("recBtn").textContent = keep ? "Reintentar envío" : "Grabar"; $("recBtn").disabled = false;
+      return;
+    }
+    pending = null;
+    setStatus(`Transcrito: ${data.segments} segmentos, ${data.seconds} s${data.labeled ? "" : " (hablantes sin etiquetar)"}.`, "ok");
+    $("recLabel").textContent = "Listo";
+    // Auto-draft: once per finished transcription, only when the clinic may use the AI (else the notice
+    // stays). The form is not shown before the draft answers, so nothing typed can be overwritten.
+    if (aiAllowed()) await requestDraft(id); else await refresh();
+  }
   $("recBtn").addEventListener("click", async () => {
+    if (pending && pending.id === consultId) { await upload(pending.id, pending.blob); return; }
     if (recorder && recorder.state === "recording") { recorder.stop(); return; }
     let stream;
     try { stream = await navigator.mediaDevices.getUserMedia({ audio: true }); } catch (e) { setStatus(`Sin micrófono: ${e.name}`, "err"); return; }
@@ -191,20 +251,10 @@
     recorder.addEventListener("stop", async () => {
       clearInterval(timerHandle);
       stream.getTracks().forEach((t) => t.stop());
-      $("recDot").classList.remove("on"); $("recLabel").textContent = "Enviando…"; $("recBtn").disabled = true;
+      $("recDot").classList.remove("on");
       const blob = new Blob(chunks, { type: mimeType.split(";")[0] || "audio/webm" });
       chunks.length = 0;
-      setStatus("Transcribiendo (puede tardar un minuto)…");
-      const id = consultId; // the consult this recording belongs to, whatever is open when it finishes
-      const res = await fetch(`/api/v1/consults/${id}/audio`, { method: "POST", headers: { "Content-Type": blob.type }, body: blob });
-      let data = {};
-      try { data = await res.json(); } catch (e) { data = { error: e.name }; }
-      if (!res.ok) { setStatus(`No se pudo transcribir (${res.status}): ${data.error || ""}. Intenta de nuevo.`, "err"); $("recLabel").textContent = "Sin grabar"; $("recBtn").disabled = false; return; }
-      setStatus(`Transcrito: ${data.segments} segmentos, ${data.seconds} s${data.labeled ? "" : " (hablantes sin etiquetar)"}.`, "ok");
-      $("recLabel").textContent = "Listo";
-      // Auto-draft: once per finished transcription, only when the clinic may use the AI (else the notice
-      // stays). The form is not shown before the draft answers, so nothing typed can be overwritten.
-      if (aiAllowed()) await requestDraft(id); else await refresh();
+      await upload(consultId, blob); // the consult this recording belongs to, whatever is open when it finishes
     });
     recorder.start();
     const startedAt = Date.now();
@@ -311,6 +361,7 @@
   function renderDraft(draft) {
     const form = $("soap");
     form.replaceChildren();
+    edited = false;
     const body = draft ? draft.body : { subjective: {}, vitals: {}, physical_exam: {}, assessment: {}, plan: {}, prescription: [], vaccines: [], billable: [] };
     lastDraftBillable = body.billable;
     claimedQty.clear();
@@ -355,8 +406,12 @@
   // call it knows will be refused. `id` is pinned by the caller: a consult switched during the minute
   // of transcription is never drafted by mistake, and the screen is only refreshed if it still shows it.
   let drafting = false;
+  // Anything typed since the last draft was painted: «Regenerar» asks first, and a failed fill never repaints over it.
+  let edited = false;
+  $("soap").addEventListener("input", () => { edited = true; });
   async function requestDraft(id) {
     if (drafting) return;
+    if (edited && !confirm("Se perderá lo escrito a mano en el expediente. ¿Regenerar?")) return;
     drafting = true;
     $("fillBtn").disabled = true; $("fillState").textContent = "Pidiendo el borrador a la IA…";
     const { ok, status, data } = await api(`/${id}/fill`, { method: "POST" });
@@ -364,7 +419,8 @@
     if (status === 402) await loadSubscription();
     if (id !== consultId) return;
     $("fillBtn").disabled = false;
-    await refresh(); // renderDraft repaints the form from the server (nothing was editable while waiting) and the 402 notice
+    if (ok || !edited) await refresh(); // repaint from the server only with a new draft, or when nothing was typed (first draft, 402 notice)
+    else if (status === 402) $("fillState").textContent = "Sin suscripción activa la IA no genera el borrador; lo escrito a mano se conserva.";
     if (!ok && status !== 402) $("fillState").textContent = `No se pudo generar (${data.error || ""}). Puedes pedirlo de nuevo con el botón.`;
   }
   $("fillBtn").addEventListener("click", () => requestDraft(consultId));
