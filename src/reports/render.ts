@@ -2,7 +2,9 @@
 import type { Bill } from "../billing";
 import type { ApprovedConsult } from "../clinical/schema";
 import type { CleanImage } from "../images";
-import { formatCents } from "../money";
+import { centsToValue } from "../money";
+import { wrapText } from "../prior/text";
+import { formatClinicDate } from "../time";
 import type { Block } from "./pdf";
 
 export interface ReportHeader {
@@ -151,20 +153,53 @@ export function rxBlocks(body: ApprovedConsult, h: ReportHeader, d: RxDetails): 
   return out;
 }
 
-/** The bill, one line per snapshot concept. The ONLY text source for the ticket and the chat messages. */
-export function billTextLines(bill: Bill, currency: string): string[] {
-  const f = (cents: number) => formatCents(cents, currency);
+export const TICKET_COLS = 32;
+export interface TicketHeader {
+  clinicName: string;
+  petName: string;
+  date: string; // ISO; printed as dd/mm/yyyy clinic-local
+}
+const monoFont = { widthOfTextAtSize: (t: string) => t.length };
+/** `left` padded so `right` ends at column 32 (one space between them if the pair does not fit). */
+function ticketRow(left: string, right: string): string {
+  return left + right.padStart(Math.max(TICKET_COLS - left.length, right.length + 1));
+}
+/**
+ * The 32-column ticket, one string per line. The ONLY text source for the account: the chat (inside a fenced
+ * block) and ticket.pdf (Courier) print exactly these strings, so what the owner reads is what was charged.
+ */
+export function ticketLines(bill: Bill, currency: string, t: TicketHeader): string[] {
+  const money = (cents: number) => `$${centsToValue(cents)}`;
+  const center = (s: string) => " ".repeat(Math.max(0, Math.floor((TICKET_COLS - s.length) / 2))) + s;
+  const rule = "-".repeat(TICKET_COLS);
   return [
-    ...bill.lines.map((l) => `• ${l.name} ×${l.quantity} ${f(l.unitPriceCents)} = ${f(l.lineTotalCents)}`),
-    `Total: ${f(bill.totalCents)}`,
-    `Anticipo capturado: -${f(bill.depositCents)}`,
-    bill.balanceCents > 0 ? `Saldo pendiente: ${f(bill.balanceCents)}` : "Sin saldo pendiente",
+    center(t.clinicName.slice(0, TICKET_COLS)),
+    center(`Ticket ${formatClinicDate(t.date)} · ${t.petName}`.slice(0, TICKET_COLS)),
+    rule,
+    ...bill.lines.flatMap((l) => [...wrapText(l.name.replace(/\S{33,}/g, (w) => w.match(/.{1,32}/g)!.join(" ")), monoFont, 1, TICKET_COLS, 4), ticketRow(`  ${l.quantity} x ${money(l.unitPriceCents)}`, money(l.lineTotalCents))]),
+    rule,
+    ticketRow("Total", money(bill.totalCents)),
+    ...(bill.depositCents > 0 ? [ticketRow("Anticipo", `-${money(bill.depositCents)}`)] : []),
+    ticketRow("SALDO", money(bill.balanceCents)),
+    currency,
   ];
+}
+/** The same ticket for the chat: fenced so WhatsApp (and sim.js) render it monospaced. */
+export function ticketChat(bill: Bill, currency: string, t: TicketHeader): string[] {
+  return ["```", ...ticketLines(bill, currency, t), "```"];
+}
+/** 80 mm wide (226 pt), as tall as its lines: one strip, never a second page. */
+export function ticketPage(blocks: Block[]) {
+  const lines = blocks.reduce((n, b) => n + (b.kind === "mono" ? b.lines.length : 4), 0);
+  return { w: 226, h: 28 + 11 * lines + 24, margin: 14 };
 }
 
 /** Account ticket from the approved snapshot (never today's prices). No payer data, no provider ids. */
 export function ticketBlocks(h: ReportHeader, bill: Bill, currency: string): Block[] {
-  return [...header(h, "Cuenta de la consulta"), { kind: "h2", text: "Conceptos" }, ...billTextLines(bill, currency).map((text) => ({ kind: "p" as const, text })), { kind: "small", text: `Estado: ${bill.balanceCents > 0 ? "saldo pendiente" : "sin saldo pendiente"}. Los precios incluyen impuestos y los fija la clínica; este documento no es un comprobante fiscal.` }];
+  return [
+    { kind: "mono", lines: ticketLines(bill, currency, { clinicName: h.clinicName, petName: h.petName, date: h.approvedAt }) },
+    { kind: "small", text: `Estado: ${bill.balanceCents > 0 ? "saldo pendiente" : "sin saldo pendiente"}. Los precios incluyen impuestos y los fija la clínica; este documento no es un comprobante fiscal.` },
+  ];
 }
 
 /** Full report: SOAP, vitals, exam, vaccines, plain explanation, images (never the rx). */

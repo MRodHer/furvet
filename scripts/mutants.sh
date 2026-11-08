@@ -49,9 +49,9 @@ run_mutant "claude response schema rejects thinking blocks again (prod: ZodError
 run_mutant "claude catch-all swallows a malformed text block as opaque" src/agent/claude.ts \
   's/z.string().refine((t) => t !== "text" \&\& t !== "tool_use")/z.string()/' test/sim.test.ts || status=1
 run_mutant "deposit confirmation message sent without the this-batch guard (replay/concurrent duplicate speaks twice)" src/routes/webhook.ts \
-  's/DEPOSIT_CONFIRMED_TEXT, "changes() = 1", \[\], 1)/DEPOSIT_CONFIRMED_TEXT, "1 = 1", [], 1)/' test/webhook.test.ts || status=1
+  's/depositConfirmedText(appt), "changes() = 1", \[\], 1)/depositConfirmedText(appt), "1 = 1", [], 1)/' test/webhook.test.ts || status=1
 run_mutant "deposit confirmation inserted as a human message (is_bot 0 mutes the agent, E13)" src/routes/webhook.ts \
-  's/DEPOSIT_CONFIRMED_TEXT, "changes() = 1", \[\], 1)/DEPOSIT_CONFIRMED_TEXT, "changes() = 1", [], 0)/' test/webhook.test.ts || status=1
+  's/depositConfirmedText(appt), "changes() = 1", \[\], 1)/depositConfirmedText(appt), "changes() = 1", [], 0)/' test/webhook.test.ts || status=1
 run_mutant "clinic time shown in UTC (chat says 4:00 am for a 10:00 am slot)" src/time.ts \
   's/timeZone: CLINIC_TZ/timeZone: "UTC"/' test/time.test.ts || status=1
 run_mutant "fill prompt loses the dosis rule (model writes «una tableta», receta stays incomplete)" src/clinical/fill.ts \
@@ -61,7 +61,7 @@ run_mutant "claude catch-all excludes only text (malformed tool_use passes as op
 run_mutant "messageInserts default is_bot 1 (doctor-approved rx read as the bot: agent keeps talking over the doctor)" src/delivery.ts \
   's/isBot: 0 | 1 = 0/isBot: 0 | 1 = 1/' test/approve.test.ts || status=1
 run_mutant "deposit message guarded by the event INSERT instead of the appointment UPDATE" src/routes/webhook.ts \
-  "/UPDATE appointments SET status = 'confirmed'/{h;d}; /DEPOSIT_CONFIRMED_TEXT, \"changes() = 1\"/G" test/webhook.test.ts || status=1
+  "/UPDATE appointments SET status = 'confirmed'/{h;d}; /depositConfirmedText(appt), \"changes() = 1\"/G" test/webhook.test.ts || status=1
 run_mutant "approximate birth date ignores the months" src/agent/tools.ts \
   's/const totalMonths = (years ?? 0) \* 12 + (months ?? 0);/const totalMonths = (years ?? 0) * 12;/' test/booking.test.ts || status=1
 run_mutant "book_appointment accepts any sex string" src/agent/tools.ts \
@@ -109,9 +109,9 @@ run_mutant "post-model human re-check removed" src/agent/run.ts \
   's/if (await humanHasChat(ctx, await recentHistory(env, conversationId))) return null;/if (false) return null;/' test/sim.test.ts || status=1
 # ---- delivery C.6b: deferred balance order + one-shot explanation release ----
 run_mutant "pay-link message sent without the claim guard" src/routes/approve.ts \
-  's/...messageInserts(env.DB, consult.conversation_id, text, "changes() = 1"),/...messageInserts(env.DB, consult.conversation_id, text),/' test/approve.test.ts || status=1
+  's/...messageInserts(env.DB, consult.conversation_id, text, "EXISTS (SELECT 1 FROM delivery_tokens WHERE token_sha256 = ?4)", \[ticket.hash\]),/...messageInserts(env.DB, consult.conversation_id, text),/' test/approve.test.ts || status=1
 run_mutant "explanation release guard removed (second click sends again)" src/routes/approve.ts \
-  's/(revisada por el médico):\\n${bill.explanation}`, "changes() = 1"),/(revisada por el médico):\\n${bill.explanation}`),/; s/if (await env.DB.prepare("SELECT 1 AS x FROM explanation_releases WHERE consult_id = ?1").bind(consult.id).first()) return c.json({ error: "already sent" }, 409);//' test/approve.test.ts || status=1
+  's/revisado por la doctora:\\n${bill.explanation}`, "changes() = 1"),/revisado por la doctora:\\n${bill.explanation}`),/; s/if (await env.DB.prepare("SELECT 1 AS x FROM explanation_releases WHERE consult_id = ?1").bind(consult.id).first()) return c.json({ error: "already sent" }, 409);//' test/approve.test.ts || status=1
 run_mutant "template explanation no longer shortened (column CHECK would 500 the approval)" src/reports/explain.ts \
   's/if (text.length > MAX_EXPLANATION_CHARS) text = \[...parts, closing\].join(" ");/if (false) text = [...parts, closing].join(" ");/; s/if (text.length > MAX_EXPLANATION_CHARS) {/if (false) {/' test/explain.test.ts || status=1
 run_mutant "ledger board served without the doctor credential (H1)" src/routes/charges.ts \
@@ -199,6 +199,19 @@ run_mutant "two drafts may run at once (click during the automatic one)" public/
   's/if (drafting) return;/if (false) return;/' test/console_auth.test.ts || status=1
 run_mutant "payment_pending ignores the ledger status (chat would poll forever after capture)" src/routes/sim.ts \
   "s/ AND COALESCE(status, 'created') NOT IN ('captured', 'amount_mismatch', 'denied')//" test/sim.test.ts || status=1
+# ---- chat without repetition + 32-column ticket (Constructora C, fix-mensajes-y-ticket) ----
+run_mutant "account sent twice: ticket back in the approval message with a balance pending (TK1)" src/routes/approve.ts \
+  's/^        ? \[\]$/        ? ["", ...ticketChat(bill, env.CURRENCY, { clinicName: env.CLINIC_NAME, petName: consult.pet_name, date: now.toISOString() })]/' test/report.test.ts || status=1
+run_mutant "report announced before the capture (an /r/ link in the approval message with a balance pending)" src/routes/approve.ts \
+  's/      "La receta te la entrega la doctora impresa y firmada.",$/      "La receta te la entrega la doctora impresa y firmada.", `Informe completo: ${base}\/r\/${report.token}`,/' test/approve.test.ts || status=1
+run_mutant "ticket amounts no longer end at column 32 (padStart off by one)" src/reports/render.ts \
+  's/right.padStart(Math.max(TICKET_COLS - left.length, right.length + 1))/right.padStart(Math.max(TICKET_COLS - 1 - left.length, right.length + 1))/' test/ticket.test.ts || status=1
+run_mutant "ticket printed in Helvetica (proportional: columns drift)" src/reports/pdf.ts \
+  's/for (const l of b.lines) line(l, 9, 3, 11);/for (const l of b.lines) line(l, 9, 1, 11);/' test/report.test.ts || status=1
+run_mutant "deposit confirmation ignores the appointment (bot repeats day and hour)" src/routes/webhook.ts \
+  's/return appt ? `¡Pago recibido!/return !appt ? `¡Pago recibido!/' test/webhook.test.ts || status=1
+run_mutant "sim.js renders fenced blocks as plain text (no <pre>)" public/sim.js \
+  's/const pre = document.createElement("pre");/const pre = document.createElement("span");/' test/ticket.test.ts || status=1
 run_mutant "console folds cards on a desktop too (narrow gate removed)" public/console.js \
   's/if (!narrow.matches) return;/if (false) return;/' test/console_auth.test.ts || status=1
 exit $status

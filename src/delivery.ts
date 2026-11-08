@@ -3,7 +3,7 @@ import { sha256Hex } from "./auth";
 
 export type TokenKind = "rx" | "report";
 export const TOKEN_TTL_MS = 30 * 24 * 60 * 60 * 1000;
-const MESSAGE_MAX = 4000; // messages.text CHECK
+export const MESSAGE_MAX = 4000; // messages.text CHECK
 
 /** 256-bit token, base64url. Only its sha256 is stored. */
 export async function newToken(): Promise<{ token: string; hash: string }> {

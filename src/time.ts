@@ -6,3 +6,12 @@ export const CLINIC_TIME_FORMAT: Intl.DateTimeFormatOptions = { timeZone: CLINIC
 export function formatClinicTime(iso: string): string {
   return new Intl.DateTimeFormat("es-MX", CLINIC_TIME_FORMAT).format(new Date(iso));
 }
+
+/** dd/mm/yyyy, clinic-local (ticket header, deposit confirmation). */
+export function formatClinicDate(iso: string): string {
+  return new Intl.DateTimeFormat("es-MX", { timeZone: CLINIC_TZ, day: "2-digit", month: "2-digit", year: "numeric" }).format(new Date(iso));
+}
+/** Clock only, clinic-local, e.g. "4:00 p.m." (deposit confirmation). */
+export function formatClinicClock(iso: string): string {
+  return new Intl.DateTimeFormat("es-MX", { timeZone: CLINIC_TZ, timeStyle: "short" }).format(new Date(iso));
+}

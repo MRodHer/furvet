@@ -7,7 +7,7 @@ const raw = async (res: Response) => new TextDecoder("latin1").decode(await res.
 const doc = (value: string) => ({ value, source: "doctor" });
 
 describe("CALIF probe rx-legible", () => {
-  it("rx.pdf is half letter 396x612, 1 page with 4 meds, only sizes 14/10.5/8, dose lines at 10.5; ticket stays A4; owner name not in logs", async () => {
+  it("rx.pdf is half letter 396x612, 1 page with 4 meds, only sizes 14/10.5/8, dose lines at 10.5; ticket is an 80 mm strip (226 pt); owner name not in logs", async () => {
     const seeded = await seedConsult();
     await env.DB.prepare("UPDATE contacts SET name = ?2 WHERE id = ?1").bind(seeded.conv, "Zutano Quirquincho").run();
     const { app } = makeApp(fakes());
@@ -29,11 +29,12 @@ describe("CALIF probe rx-legible", () => {
     expect([...sizes].sort()).toEqual(["10.5", "14", "8"]);
     const dose = rx.match(/\/F1 ([\d.]+) Tf [^\n]*\(\s+250 mg/);
     expect(dose?.[1], "dose line size").toBe("10.5");
-    // ticket.pdf has no doctor route (it is served at /t/<token>); read what approve.ts wrote to R2 to prove it stays A4.
+    // ticket.pdf has no doctor route (it is served at /t/<token>); read what approve.ts wrote to R2 to prove it is the 226 pt strip.
     const bill = await env.DB.prepare("SELECT approval_id FROM consult_bills WHERE consult_id = ?1").bind(seeded.consult).first<{ approval_id: string }>();
     const tkObj = await env.FILES.get(`reports/${bill?.approval_id}/ticket.pdf`);
     const tk = new TextDecoder("latin1").decode(await (tkObj as R2ObjectBody).arrayBuffer());
-    expect(tk).toContain("/MediaBox [0 0 595 842]");
+    expect(tk).toMatch(/\/MediaBox \[0 0 226 \d+\]/);
+    expect(tk).toContain("/Count 1"); // one strip, never a second page
     expect(rx).not.toContain("Visitante");
   });
 

@@ -101,7 +101,9 @@ describe("POST /approve (V7-C, V8, V9, D.4)", () => {
     expect(msgs).not.toContain("/rx/");
     expect(msgs).toContain("/t/");
     expect(msgs).toContain("881.00");
-    expect(msgs).toMatch(/Liga para pagar el saldo.*https:\/\/www\.sandbox\.paypal\.com\//);
+    expect(msgs).toMatch(/\nPagar saldo \(\$881\.00 MXN\): https:\/\/www\.sandbox\.paypal\.com\/\S+\nAl pagar recibirás el informe completo\.$/m); // the URL ends its line: no «.» glued to the href
+    expect(msgs.split("\nTotal ").length - 1, "the account once").toBe(1);
+    expect(msgs).not.toContain("/r/"); // the report is announced only when the balance is captured
     // Second click: same charge and link, no second order, no second message (M6-b idempotency).
     const msgsBefore = (await messages(conv)).results.length;
     const again = await charge(app, consult);
@@ -111,7 +113,7 @@ describe("POST /approve (V7-C, V8, V9, D.4)", () => {
     expect((await messages(conv)).results.length).toBe(msgsBefore);
     expect(await count("charges", "consult_id = ?1", consult)).toBe(1);
     expect((await env.DB.prepare("SELECT status FROM consults WHERE id = ?1").bind(consult).first<{ status: string }>())?.status).toBe("approved");
-    expect(await count("delivery_tokens", "consult_id = ?1", consult)).toBe(2);
+    expect(await count("delivery_tokens", "consult_id = ?1", consult)).toBe(3); // approval: ticket + report; «Generar cobro»: the ticket link sent with the pay link
     // B1: the approved clinical body is evidence in the append-only consult_versions, same batch.
     const version = await env.DB.prepare("SELECT body, created_by FROM consult_versions WHERE consult_id = ?1 AND kind = 'approved'").bind(consult).first<{ body: string; created_by: string }>();
     expect(version?.created_by).toBe("val");
@@ -252,7 +254,7 @@ describe("POST /approve (V7-C, V8, V9, D.4)", () => {
     expect((await charge(app, consult, noPayPal)).status).toBe(503);
     expect((await charge(makeApp(down).app, consult)).status).toBe(500);
     expect(await count("charges", "consult_id = ?1", consult)).toBe(0);
-    expect((await messages(conv)).results.map((m) => m.text).join("\n")).not.toContain("Liga para pagar");
+    expect((await messages(conv)).results.map((m) => m.text).join("\n")).not.toContain("Pagar saldo");
   });
 
   it("M6-b3: balance 0 → «Generar cobro» 409; «Generar cobro» before approval → 409", async () => {
@@ -302,7 +304,9 @@ describe("«Enviar al dueño» (second approval of the AI explanation)", () => {
       expect(sent.status).toBe(201);
       const texts = (await messages(conv)).results.map((m) => m.text);
       expect(texts.filter((t) => t.includes(EXPLANATION))).toHaveLength(1);
-      expect(texts.at(-1)).toMatch(/revisada por el m/);
+      expect(texts.at(-1)!.startsWith("Resumen de la consulta de Firulais, revisado por la doctora:\n")).toBe(true);
+      expect(texts.at(-1)).not.toContain("Total"); // no account, no links in the summary
+      expect(texts.at(-1)).not.toContain("https://");
       expect(await pdfText(out.approval_id)).toContain("En palabras sencillas");
       const release = await env.DB.prepare("SELECT released_by FROM explanation_releases WHERE consult_id = ?1").bind(consult).first<{ released_by: string }>();
       expect(release?.released_by).toBe("val");
@@ -508,7 +512,8 @@ describe("the rx is printed by the doctor, never sent (ADENDA 2)", () => {
     const ticket = await app.request(`/t/${ticketToken}`, {}, doctorEnv());
     expect(ticket.status).toBe(200);
     const ticketText = new TextDecoder("latin1").decode(await ticket.arrayBuffer());
-    expect(ticketText).toContain("Cuenta de la consulta");
+    expect(ticketText).toContain("/BaseFont /Courier");
+    expect(ticketText).toMatch(/\(  Ticket \d{2}\/\d{2}\/\d{4} · Firulais\) Tj/);
     expect(ticketText).not.toContain("Medicamentos");
     expect((await rxRoute({})).status).toBe(401);
     const pdf = await rxRoute();
@@ -529,8 +534,8 @@ describe("snapshot prices (TK4)", () => {
     expect((await post(app, consult, approvedBody(ids))).status).toBe(201);
     await env.DB.prepare("UPDATE catalog_items SET price_cents = 99999 WHERE id = ?1").bind(ids["MED-AMOXI"]).run();
     expect((await charge(app, consult)).status).toBe(201);
-    const pay = (await messages(conv)).results.map((m) => m.text).find((m) => m.includes("Liga para pagar"))!;
-    expect(pay).toContain("• MED-AMOXI ×1 $125.25 MXN = $125.25 MXN");
+    const pay = (await messages(conv)).results.map((m) => m.text).find((m) => m.includes("Pagar saldo"))!;
+    expect(pay).toContain("MED-AMOXI\n  1 x $125.25            $125.25\n");
     expect(pay).not.toContain("999.99");
     const order = JSON.parse(calls.find((c) => c.key === PP.orders)!.body);
     expect(order.purchase_units[0].items.map((i: { name: string; unit_amount: { value: string } }) => [i.name, i.unit_amount.value])).toContainEqual(["MED-AMOXI", "125.25"]);
