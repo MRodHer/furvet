@@ -56,6 +56,18 @@ describe("32-column ticket (one formatter for chat and PDF)", () => {
     expect(lines[i + 1]).toBe("espectro sabor pollo 250 ml.");
     expect(lines[i + 2]).toBe("  2 x $123.45            $246.90");
     expect(lines.some((l) => l.startsWith("Anticipo"))).toBe(false);
+    // A 40-char word without spaces is split at 32 (wrapText never breaks words on its own); 120-char names keep all 4 lines.
+    const word = "Suspensionantibioticaamplioespectro250ml";
+    expect(word.length).toBe(40);
+    const w = ticketLines({ ...b, lines: [{ ...b.lines[0]!, name: word }] }, "MXN", head);
+    expect(w).toContain("Suspensionantibioticaamplioespec");
+    expect(w).toContain("tro250ml");
+    const name120 = Array.from({ length: 15 }, () => "palabra").join(" ") + " fin";
+    expect(name120.length).toBe(123);
+    const long120 = name120.slice(0, 120);
+    const n = ticketLines({ ...b, lines: [{ ...b.lines[0]!, name: long120 }] }, "MXN", head);
+    expect(n.join(" ").includes("…")).toBe(false);
+    for (const l of [...w, ...n]) expect(l.length, l).toBeLessThanOrEqual(TICKET_COLS);
     expect(lines.at(-2)).toBe("SALDO                    $246.90");
     for (const l of lines) expect(l.length, l).toBeLessThanOrEqual(TICKET_COLS);
   });
@@ -130,5 +142,24 @@ describe("sim.js renders fenced blocks as <pre> through textContent", () => {
     expect(msg.children.some((c) => c.tag === "script")).toBe(false);
     // Everything else is text nodes: no anchor for a non-PayPal URL, no element from the payload.
     expect(msg.children.filter((c) => c.tag !== "#text").map((c) => c.tag)).toEqual(["pre"]);
+  });
+
+  it("T7-bis: the pay link's href is EXACTLY the approve URL (the sentence after it starts a new line, so no «.» is glued on)", async () => {
+    const js = await (await env.ASSETS.fetch(new Request("https://furvet.test/sim.js"))).text();
+    type N = { tag: string; children: N[]; textContent: string; href?: string; [k: string]: unknown };
+    const mk = (tag: string): N => ({ tag, children: [], textContent: "", value: "", appendChild(c: N) { (this as N).children.push(c); return c; }, replaceChildren() { (this as N).children = []; }, addEventListener() {}, focus() {} });
+    const log = mk("div");
+    const byId: Record<string, N> = { log };
+    const document = { getElementById: (id: string) => (byId[id] ??= mk(id)), createElement: mk, createTextNode: (t: string) => ({ tag: "#text", children: [], textContent: t }), addEventListener() {}, visibilityState: "visible" };
+    const url = "https://www.sandbox.paypal.com/checkoutnow?token=5O190127TN364715T";
+    // The exact shape /charge writes: ticket, /t link, pay line ending with the URL, then the sentence on its own line.
+    const text = `${F}\nSALDO                    $488.00\nMXN\n${F}\nTicket en PDF: https://furvet.test/t/x\nPagar saldo ($488.00 MXN): ${url}\nAl pagar recibirás el informe completo.`;
+    const fetch = async () => ({ ok: true, json: async () => ({ messages: [{ direction: "outbound", text }], consent: null, payment_pending: true }) });
+    new Function("document", "fetch", "localStorage", "setInterval", "clearInterval", js)(document, fetch, { getItem: () => "s", setItem() {} }, () => 0, () => {});
+    await new Promise((r) => setTimeout(r, 0));
+    const anchors = log.children[0]!.children.filter((c) => c.tag === "a");
+    expect(anchors).toHaveLength(1);
+    expect(anchors[0]!.href).toBe(url);
+    expect(anchors[0]!.textContent).toBe("Pagar con PayPal (sandbox)");
   });
 });

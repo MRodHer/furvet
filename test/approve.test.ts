@@ -101,7 +101,7 @@ describe("POST /approve (V7-C, V8, V9, D.4)", () => {
     expect(msgs).not.toContain("/rx/");
     expect(msgs).toContain("/t/");
     expect(msgs).toContain("881.00");
-    expect(msgs).toMatch(/\nPagar saldo \(\$881\.00 MXN\): https:\/\/www\.sandbox\.paypal\.com\/\S+\. Al pagar recibirás el informe completo\.$/m);
+    expect(msgs).toMatch(/\nPagar saldo \(\$881\.00 MXN\): https:\/\/www\.sandbox\.paypal\.com\/\S+\nAl pagar recibirás el informe completo\.$/m); // the URL ends its line: no «.» glued to the href
     expect(msgs.split("\nTotal ").length - 1, "the account once").toBe(1);
     expect(msgs).not.toContain("/r/"); // the report is announced only when the balance is captured
     // Second click: same charge and link, no second order, no second message (M6-b idempotency).

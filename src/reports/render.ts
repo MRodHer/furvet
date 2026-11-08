@@ -176,7 +176,7 @@ export function ticketLines(bill: Bill, currency: string, t: TicketHeader): stri
     center(t.clinicName.slice(0, TICKET_COLS)),
     center(`Ticket ${formatClinicDate(t.date)} · ${t.petName}`.slice(0, TICKET_COLS)),
     rule,
-    ...bill.lines.flatMap((l) => [...wrapText(l.name, monoFont, 1, TICKET_COLS, 3), ticketRow(`  ${l.quantity} x ${money(l.unitPriceCents)}`, money(l.lineTotalCents))]),
+    ...bill.lines.flatMap((l) => [...wrapText(l.name.replace(/\S{33,}/g, (w) => w.match(/.{1,32}/g)!.join(" ")), monoFont, 1, TICKET_COLS, 4), ticketRow(`  ${l.quantity} x ${money(l.unitPriceCents)}`, money(l.lineTotalCents))]),
     rule,
     ticketRow("Total", money(bill.totalCents)),
     ...(bill.depositCents > 0 ? [ticketRow("Anticipo", `-${money(bill.depositCents)}`)] : []),

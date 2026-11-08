@@ -46,7 +46,7 @@
     div.className = `msg ${direction}`;
     // Fenced blocks (the account ticket) go verbatim into a <pre>; in the rest, sandbox PayPal URLs become
     // clickable. Everything is textContent/text nodes: never markup.
-    text.split(/```\n?([\s\S]*?)\n?```/g).forEach((chunk, i) => {
+    text.split(/```\n?([\s\S]*?)\n?```\n?/g).forEach((chunk, i) => {
       if (i % 2) {
         const pre = document.createElement("pre");
         pre.textContent = chunk;

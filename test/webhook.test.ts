@@ -214,7 +214,8 @@ describe("PayPal webhook (E1-E4, E6, E14, D.1)", () => {
       expect(await (await post(app, approvedEvent("WH-D1", orderId, chargeId))).json()).toEqual({ status: "captured" });
       expect(await apptStatus()).toBe("confirmed");
       expect(await botMsgs()).toBe(1); // the ONE confirmation: pet, day and hour from OUR appointment row
-      expect(DEPOSIT_TEXT).toMatch(/^¡Pago recibido! Firulais queda agendado el 10 nov 2026, 4:00 .*🐾$/);
+      expect(DEPOSIT_TEXT).toMatch(/^¡Pago recibido! Firulais queda agendado el 10\/11\/2026 a las 4:00 .*🐾$/);
+      expect(DEPOSIT_TEXT).not.toContain("..");
       expect(await count("messages", "conversation_id = ?1 AND direction = 'outbound'", conv)).toBe(1);
       expect(await count("messages", "conversation_id = ?1 AND text LIKE '%anticipo%'", conv)).toBe(0);
       assertNoPii(logs.lines);

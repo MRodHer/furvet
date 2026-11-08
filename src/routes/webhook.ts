@@ -17,7 +17,7 @@ import { messageInserts, newToken, tokenInsert } from "../delivery";
 import { readCapped } from "../body";
 import { valueToCents } from "../money";
 import { errName, log } from "../log";
-import { formatClinicTime } from "../time";
+import { formatClinicClock, formatClinicDate } from "../time";
 import { handleSubscriptionEvent } from "../subscription";
 
 const MAX_BODY_BYTES = 64 * 1024;
@@ -25,7 +25,7 @@ const MAX_BODY_BYTES = 64 * 1024;
 export const DEPOSIT_CONFIRMED_TEXT = "¡Pago recibido! Tu cita quedó confirmada. 🐾";
 /** The ONE deposit confirmation: pet, day and hour (clinic-local), so the bot has nothing left to repeat. */
 export function depositConfirmedText(appt: { pet_name: string; starts_at: string } | null): string {
-  return appt ? `¡Pago recibido! ${appt.pet_name} queda agendado el ${formatClinicTime(appt.starts_at)}. 🐾` : DEPOSIT_CONFIRMED_TEXT;
+  return appt ? `¡Pago recibido! ${appt.pet_name} queda agendado el ${formatClinicDate(appt.starts_at)} a las ${formatClinicClock(appt.starts_at)} 🐾` : DEPOSIT_CONFIRMED_TEXT;
 }
 
 const EventSchema = z.object({
@@ -198,7 +198,7 @@ async function recordAndSettle(
     // UPDATE above): a replay or a concurrent duplicate confirms nothing and says nothing. Pet + slot read from
     // OUR appointment row (never the payload); no payer data, no link. is_bot = 1 so the agent keeps answering (E13).
     if (charge.conversation_id) {
-      const appt = await env.DB.prepare("SELECT p.name AS pet_name, s.starts_at FROM appointments a JOIN pets p ON p.id = a.pet_id JOIN slots s ON s.id = a.slot_id WHERE a.id = ?1").bind(charge.appointment_id).first<{ pet_name: string; starts_at: string }>();
+      const appt = await env.DB.prepare("SELECT p.name AS pet_name, s.starts_at FROM appointments a JOIN pets p ON p.id = a.pet_id JOIN slots s ON s.id = a.slot_id WHERE a.id = ?1").bind(charge.appointment_id).first<{ pet_name: string; starts_at: string }>().catch(() => null); // a failed read never blocks the confirmation
       stmts.push(...messageInserts(env.DB, charge.conversation_id, depositConfirmedText(appt), "changes() = 1", [], 1));
     }
   }

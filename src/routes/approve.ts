@@ -11,7 +11,7 @@ import { doctorAuth } from "../auth";
 import { buildLines, computeBill, BillingError, type Bill, type BillLine, type CatalogRow } from "../billing";
 import { ApprovedConsult } from "../clinical/schema";
 import { incompleteMedications } from "../clinical/grounding";
-import { messageInserts, newToken, tokenInsert } from "../delivery";
+import { MESSAGE_MAX, messageInserts, newToken, tokenInsert } from "../delivery";
 import { intVar, type Deps, type Env } from "../env";
 import { cleanImage, ImageError, MAX_IMAGE_BYTES, type CleanImage } from "../images";
 import { claimChargeStatements, currentCharge } from "../ledger";
@@ -299,11 +299,14 @@ export function approveRoutes(deps: Deps, paypalFor: (env: Env) => PayPalClient 
     // The account, once: the 32-column ticket, its PDF link (a fresh token: the clear one only exists at
     // creation) and the pay link. claim (header → event) → token → message, each chained on "the previous one landed".
     const ticket = await newToken();
-    const text = [
+    const full = [
       ...ticketChat(snapshot, env.CURRENCY, { clinicName: env.CLINIC_NAME, petName: consult.pet_name, date: bill.created_at }),
       `Ticket en PDF: ${env.PUBLIC_BASE_URL}/t/${ticket.token}`,
-      `Pagar saldo (${formatCents(bill.balance_cents, env.CURRENCY)}): ${order.approveUrl}. Al pagar recibirás el informe completo.`,
-    ].join("\n");
+      `Pagar saldo (${formatCents(bill.balance_cents, env.CURRENCY)}): ${order.approveUrl}`, // the URL ends the line: sim.js links up to the next space
+      "Al pagar recibirás el informe completo.",
+    ];
+    // One row, always: a ticket longer than a messages row would split the fence, so it stays in the PDF only.
+    const text = (full.join("\n").length <= MESSAGE_MAX ? full : full.slice(full.lastIndexOf("```") + 1)).join("\n");
     const results = await env.DB.batch([
       ...claimChargeStatements(env.DB, { id: chargeId, kind: "balance", consultId: consult.id, conversationId: consult.conversation_id, paypalOrderId: order.orderId, paypalRequestId: chargeId, amountCents: bill.balance_cents, currency: env.CURRENCY, approveUrl: order.approveUrl }, order.raw),
       tokenInsert(env.DB, ticket.hash, consult.id, "rx", deps.now(), "changes() = 1"),
