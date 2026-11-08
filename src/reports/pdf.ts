@@ -59,14 +59,14 @@ export function buildPdf(blocks: Block[], page: { w: number; h: number; margin: 
   for (const b of blocks) {
     if (b.kind === "styled") {
       if (b.gap) y -= b.gap;
-      const leading = Math.round(b.size * 1.26);
+      const leading = b.size * 1.2; // 120% line spacing (unrounded): compact enough to keep 4 meds on one half-letter page, still legible
       const pad = b.indent ? " ".repeat(b.indent) : ""; // leading spaces survive into the PDF literal (wrapText would strip them)
       const w = TEXT_W - (b.indent ? b.indent * 0.55 * b.size : 0);
       for (const l of wrapText(b.text, approxFont, b.size, w, 200)) line(pad + l, b.size, b.bold ? 2 : 1, leading);
       continue;
     }
     if (b.kind === "cols") {
-      const leading = Math.round(b.size * 1.26);
+      const leading = b.size * 1.2;
       if (y - leading < MARGIN) newPage();
       y -= leading;
       const midX = MARGIN + TEXT_W / 2;

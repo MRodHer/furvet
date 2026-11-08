@@ -91,6 +91,31 @@ export function ageLabel(birthDate: string | null, at: string): string | null {
   return `${n} ${n === 1 ? unit[0] : unit[1]}`;
 }
 
+/** Pharmaceutical form (closed enum from the draft schema) → printable Spanish. The form is NEVER assumed:
+ *  only a present `forma_farmaceutica` prints, and an unmapped value prints verbatim rather than being dropped. */
+const FORMA_LABEL: Record<string, string> = {
+  tableta: "tabletas", capsula: "cápsulas", suspension: "suspensión", jarabe: "jarabe", inyectable: "inyectable",
+  crema: "crema", gotas_oft: "gotas oftálmicas", gotas_otic: "gotas óticas", parche: "parche",
+  supositorio: "supositorios", polvo: "polvo", solucion: "solución",
+};
+const formaLabel = (f: string): string => FORMA_LABEL[f] ?? f;
+
+/** Closed, small list of common antibiotic / NSAID active principles. The «Con o después de alimentos.» legend
+ *  prints ONLY when the medication name contains one of these (lower-cased, unaccented). An unclassified drug
+ *  prints NO legend (the doctor may write one in `indicaciones`): the code never invents a clinical instruction
+ *  (fail-safe). To cover a new drug, ADD its principle here — never widen the match. */
+const WITH_FOOD = [
+  "amoxicilina", "ampicilina", "clindamicina", "cefalexina", "cefadroxilo", "cefovecina", "doxiciclina",
+  "oxitetraciclina", "tetraciclina", "enrofloxacina", "marbofloxacina", "ciprofloxacina", "metronidazol",
+  "trimetoprim", "sulfametoxazol", "sulfadiazina", "azitromicina", "eritromicina", "claritromicina",
+  "lincomicina", "tilosina", "cloranfenicol", "florfenicol", "nitrofurantoina", "clavulanico", "penicilina",
+  "meloxicam", "carprofeno", "firocoxib", "robenacoxib", "deracoxib", "mavacoxib", "ketoprofeno", "ketorolaco",
+  "flunixin", "fenilbutazona", "piroxicam", "tolfenamico", "acetilsalicilico", "aspirina", "naproxeno",
+  "ibuprofeno", "diclofenaco", "tepoxalina",
+];
+const norm = (s: string): string => s.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
+const withFood = (name: string | null): boolean => (name ? WITH_FOOD.some((p) => norm(name).includes(p)) : false);
+
 /** Half-letter page for the rx (5.5 × 8.5 in = 396 × 612 pt): a real Mexican vet prescription size,
  *  printable on half a sheet or on letter cut in two. 36 pt (1.27 cm) margins print on any printer. */
 export const RX_PAGE = { w: 396, h: 612, margin: 36 };
@@ -123,13 +148,29 @@ export function rxBlocks(body: ApprovedConsult, h: ReportHeader, d: RxDetails): 
     { kind: "cols", left: field("Peso", peso ? `${peso} kg` : null), right: field("Sexo", d.sex), size: B },
   );
   out.push({ kind: "rule" });
-  out.push({ kind: "styled", text: "Rp/", size: B, bold: true, gap: 2 });
+  // The medication list goes straight under the patient band (no «Rp/» header, by the doctor's request).
   if (!body.prescription.length) out.push({ kind: "styled", text: "Sin medicamentos.", size: B });
   body.prescription.forEach((m, i) => {
-    const name = [v(m.medicamento), v(m.concentracion), v(m.forma_farmaceutica)].filter(Boolean).join(" ");
-    const how = [v(m.dosis), v(m.frecuencia), v(m.duracion), v(m.via_administracion) ? `vía ${v(m.via_administracion)}` : null].filter(Boolean).join(" · ");
-    out.push({ kind: "styled", text: `${i + 1}. ${name}`, size: B, bold: true, gap: 3 });
-    if (how) out.push({ kind: "styled", text: how, size: B, indent: 4 });
+    // Line 1: «N. nombre (concentración) - forma - uso veterinario». The concentration lives in the parens by the
+    // name so the dose-per-take in the sentence below is never read as the total dose (Val's rule). A missing
+    // concentration or form drops its segment; the form comes from the catalog/draft, never assumed.
+    const conc = v(m.concentracion);
+    const forma = v(m.forma_farmaceutica);
+    const head = `${i + 1}. ${v(m.medicamento)}${conc ? ` (${conc})` : ""}${forma ? ` - ${formaLabel(forma)}` : ""} - uso veterinario`;
+    out.push({ kind: "styled", text: head, size: B, bold: true, gap: 3 });
+    // Line 2: a sentence built ONLY from what the doctor approved (the grounding validator already drops unsaid
+    // numbers). A missing datum drops its clause — nothing is invented or «normalized».
+    const how = [
+      v(m.via_administracion) ? `vía ${v(m.via_administracion)}` : null,
+      v(m.dosis),
+      v(m.frecuencia),
+      v(m.duracion) ? `durante ${v(m.duracion)}` : null,
+    ]
+      .filter(Boolean)
+      .join(" ");
+    if (how) out.push({ kind: "styled", text: `Administrar ${how}.`, size: B, indent: 4 });
+    // Food legend ONLY for a drug on the closed antibiotic/NSAID list; an unclassified drug prints nothing.
+    if (withFood(v(m.medicamento))) out.push({ kind: "styled", text: "Con o después de alimentos.", size: B, indent: 4 });
     if (v(m.indicaciones)) out.push({ kind: "styled", text: `Indicaciones: ${v(m.indicaciones)}`, size: B, indent: 4 });
   });
   const urgent = urgentLines(body);

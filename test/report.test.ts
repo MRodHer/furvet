@@ -1,6 +1,6 @@
 import { env } from "cloudflare:test";
 import { afterEach, describe, expect, it } from "vitest";
-import { ageLabel } from "../src/reports/render";
+import { ageLabel, rxBlocks } from "../src/reports/render";
 import { approvedBody, approvedEvent, assertNoPii, captureCompletedEvent, captureLogs, claudeToolFake, doctorEnv, doctorHeaders, makeApp, NOW, paypalFakes, seedConsult, uniqueOrderFake, webhookHeaders } from "./helpers";
 
 const fakes = (captureValue = "881.00") => ({ ...paypalFakes({ captureValue }), ...uniqueOrderFake, ...claudeToolFake(["Su perro tiene gastroenteritis leve."]) });
@@ -140,6 +140,9 @@ describe("printable rx and account ticket (RX1, TK1–TK5)", () => {
   afterEach(() => restore?.());
   // The PDF is plain windows-1252 text; parentheses are escaped inside literals.
   const pdfText = async (res: Response) => new TextDecoder("latin1").decode(await res.arrayBuffer()).replace(/\\([()\\])/g, "$1");
+  // Logical text: each `(...) Tj` literal, unescaped and de-indented, joined with a space so a sentence the narrow
+  // page wrapped across two literals reads back as one (wrapText breaks on spaces).
+  const flatten = (rawPdf: string) => [...rawPdf.matchAll(/\(((?:[^()\\]|\\.)*)\)\s*Tj/g)].map((m) => (m[1] ?? "").replace(/\\([()\\])/g, "$1").trim()).join(" ");
   const EMAIL = "zq-tutor@correo-prueba.invalid";
 
   it("RX1 (adenda): rx.pdf = date, clinic letterhead, owner name, patient (name, species, breed, age, weight, sex), medications in order, review-date and signature lines; owner email nowhere; the rx never carries money", async () => {
@@ -153,14 +156,32 @@ describe("printable rx and account ticket (RX1, TK1–TK5)", () => {
     body.prescription.push({ medicamento: { value: "aaa-omeprazol", source: "doctor" }, dosis: { value: "10 mg", source: "doctor" }, frecuencia: { value: "cada 24 h", source: "doctor" }, duracion: { value: "5 días", source: "doctor" } });
     const res = await app.request(`/api/v1/consults/${seeded.consult}/approve`, { method: "POST", headers: doctorHeaders({ "Content-Type": "application/json" }), body: JSON.stringify(body) }, doctorEnv());
     expect(res.status).toBe(201);
-    const text = await pdfText(await app.request(`/api/v1/consults/${seeded.consult}/rx.pdf`, { headers: doctorHeaders() }, doctorEnv()));
-    for (const s of ["2026-11-04", "FurVet demo clinic", "Calle Ejemplo 123", "55 0000 0000", "contacto@furvet.example", `Tutor: ${OWNER}`, "Paciente: Firulais (perro)", "Raza: labrador", "Edad: 3 años", "Peso: 12.4 kg", "Sexo: macho", "Folio ", "1. amoxicilina", "250 mg · cada 12 h · 7 días · vía oral", "MVZ (demo)", "Cédula profesional: DEMO", "Fecha de revisión: ____ / ____ / ________", "Firma: ______", "Original para el médico: imprimir, firmar y entregar.", "aprobado por el médico"]) expect(text, s).toContain(s);
+    const rawPdf = new TextDecoder("latin1").decode(await (await app.request(`/api/v1/consults/${seeded.consult}/rx.pdf`, { headers: doctorHeaders() }, doctorEnv())).arrayBuffer());
+    const text = rawPdf.replace(/\\([()\\])/g, "$1");
+    const flat = flatten(rawPdf);
+    for (const s of ["2026-11-04", "FurVet demo clinic", "Calle Ejemplo 123", "55 0000 0000", "contacto@furvet.example", `Tutor: ${OWNER}`, "Paciente: Firulais (perro)", "Raza: labrador", "Edad: 3 años", "Peso: 12.4 kg", "Sexo: macho", "Folio ", "1. amoxicilina - uso veterinario", "MVZ (demo)", "Cédula profesional: DEMO", "Fecha de revisión: ____ / ____ / ________", "Firma: ______", "Original para el médico: imprimir, firmar y entregar.", "aprobado por el médico"]) expect(text, s).toContain(s);
+    // New med format: name (strength) - form - veterinary use, then an «Administrar …» sentence; food legend only for antibiotics/NSAIDs.
+    expect(flat).toContain("Administrar vía oral 250 mg cada 12 h durante 7 días."); // amoxicilina (via given)
+    expect(flat).toContain("Con o después de alimentos."); // amoxicilina is an antibiotic
+    expect(flat).toContain("Administrar 10 mg cada 24 h durante 5 días."); // aaa-omeprazol: no «vía» (not given)
+    expect((flat.match(/Con o después de alimentos\./g) ?? []).length, "only amoxicilina classified, not omeprazol").toBe(1);
     expect(text).not.toContain(EMAIL);
     expect(text).not.toContain("MXN");
     // Order of medications = order approved: «aaa-omeprazol» sorts BEFORE «amoxicilina», so an alphabetical sort would fail here.
     expect(text.indexOf("1. amoxicilina")).toBeGreaterThan(0);
     expect(text.indexOf("1. amoxicilina")).toBeLessThan(text.indexOf("2. aaa-omeprazol"));
     expect(text.indexOf("2. aaa-omeprazol")).toBeLessThan(text.indexOf("Indicaciones urgentes"));
+  });
+
+  it("RX-legend: the food legend survives accents (NFD normalize) — «Ácido acetilsalicílico» (AINE) gets «Con o después de alimentos.»", () => {
+    const dd = (value: string) => ({ value, source: "doctor" as const });
+    const body = {
+      subjective: {}, vitals: {}, physical_exam: {}, assessment: {}, plan: {}, vaccines: [], billable: [],
+      prescription: [{ medicamento: dd("Ácido acetilsalicílico"), concentracion: dd("100 mg"), forma_farmaceutica: dd("tableta"), dosis: dd("media tableta"), frecuencia: dd("cada 24 horas"), duracion: dd("5 días"), via_administracion: dd("oral") }],
+    } as unknown as Parameters<typeof rxBlocks>[0];
+    const h = { clinicName: "c", doctorName: "d", licenseLabel: "l", petName: "p", species: "perro", folio: "F", approvedAt: "2026-11-07" };
+    const blocks = rxBlocks(body, h, { ownerName: "—", breed: null, sex: null, birthDate: null });
+    expect(blocks.some((b) => "text" in b && b.text === "Con o después de alimentos.")).toBe(true);
   });
 
   it("RX3: ageLabel — years/months, singular, birthday today, future, impossible and garbage dates", () => {

@@ -54,8 +54,8 @@ run_mutant "deposit confirmation inserted as a human message (is_bot 0 mutes the
   's/depositConfirmedText(appt), "changes() = 1", \[\], 1)/depositConfirmedText(appt), "changes() = 1", [], 0)/' test/webhook.test.ts || status=1
 run_mutant "clinic time shown in UTC (chat says 4:00 am for a 10:00 am slot)" src/time.ts \
   's/timeZone: CLINIC_TZ/timeZone: "UTC"/' test/time.test.ts || status=1
-run_mutant "fill prompt loses the dosis rule (model writes «una tableta», receta stays incomplete)" src/clinical/fill.ts \
-  '/En dosis copia LITERALMENTE/d' test/fill.test.ts || status=1
+run_mutant "fill prompt drops the «separa concentración de dosis» rule (concentración y dosis se mezclan de nuevo)" src/clinical/fill.ts \
+  '/Separa la concentración de la cantidad por toma/d' test/fill.test.ts || status=1
 run_mutant "claude catch-all excludes only text (malformed tool_use passes as opaque)" src/agent/claude.ts \
   's/t !== "text" \&\& t !== "tool_use"/t !== "text"/' test/sim.test.ts || status=1
 run_mutant "messageInserts default is_bot 1 (doctor-approved rx read as the bot: agent keeps talking over the doctor)" src/delivery.ts \
@@ -269,4 +269,10 @@ run_mutant "chat input emptied although the owner typed more during the wait (M5
   's/input.value = input.value.replace(text, "").trimStart();/input.value = "";/' test/frontend_audit.test.ts || status=1
 run_mutant "chat log stops being a live region: new bot bubbles are never announced (accessibility)" public/sim.html \
   's/<div id="log" aria-live="polite" aria-label/<div id="log" aria-label/' test/frontend_audit.test.ts || status=1
+run_mutant "per-take dose relaxation removed: «media tableta» / «un cuarto» no longer count, only digits (rx-vet-format)" src/clinical/grounding.ts \
+  's/QTY_TOKEN_RE.test(v) && DOSE_UNIT_RE.test(v)/numbersIn(v).length > 0 \&\& DOSE_UNIT_RE.test(v)/' test/grounding.test.ts || status=1
+run_mutant "numeral counts without adjacency to the unit: «un poquito de tableta» passes as a dose (rx-vet-format)" src/clinical/grounding.ts \
+  's#NUMERAL_UNIT_RE.test(v)#/\\b(un|una|dos)\\b/i.test(v)#' test/grounding.test.ts || status=1
+run_mutant "food legend printed for every drug, not only antibiotics/NSAIDs (rx-vet-format)" src/reports/render.ts \
+  's/if (withFood(v(m.medicamento)))/if (true)/' test/rx_layout.test.ts || status=1
 exit $status

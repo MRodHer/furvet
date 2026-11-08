@@ -76,22 +76,29 @@ describe("grounding validator (V4, V5, V6)", () => {
     expect(report.incomplete_medications).toEqual([{ index: 0, missing: ["frecuencia", "duracion"] }]);
   });
 
-  it("V6: a medication needs number + unit in dose, frequency and duration", () => {
+  it("V6: a medication needs a quantity + unit in the dose, and a number + unit in frequency and duration", () => {
     const complete = { medicamento: g("amoxicilina", "amoxicilina", [3]), dosis: g("250 mg", "250 mg", [3]), frecuencia: g("cada 12 horas", "cada 12 horas", [3]), duracion: g("7 días", "7 días", [3]) };
     expect(incompleteMedications({ prescription: [complete] })).toEqual([]);
-    expect(incompleteMedications({ prescription: [{ ...complete, dosis: g("una tableta", "amoxicilina", [3]) }] })).toEqual([{ index: 0, missing: ["dosis"] }]);
+    expect(incompleteMedications({ prescription: [{ ...complete, dosis: g("un poquito", "un poquito", [3]) }] })).toEqual([{ index: 0, missing: ["dosis"] }]);
     expect(incompleteMedications({ prescription: [{ ...complete, frecuencia: g("12", "12", [3]) }] })).toEqual([{ index: 0, missing: ["frecuencia"] }]);
     expect(incompleteMedications({ prescription: [{ ...complete, duracion: undefined }] })).toEqual([{ index: 0, missing: ["duracion"] }]);
   });
 
-  it("V6-b: spelled-out units count as units (the transcriber writes «250 miligramos»); number AND unit still both required", () => {
-    const complete = { medicamento: g("amoxicilina", "amoxicilina", [3]), frecuencia: g("cada 12 horas", "cada 12 horas", [3]), duracion: g("7 días", "7 días", [3]) };
-    for (const ok of ["250 miligramos", "1 miligramo", "5 mililitros", "1 gramo", "2 gramos", "50 microgramos", "10 unidades internacionales", "1 unidad internacional"]) {
-      expect(incompleteMedications({ prescription: [{ ...complete, dosis: g(ok, ok, [3]) }] })).toEqual([]);
-    }
-    for (const bad of ["una tableta", "250", "miligramos", "miligramos cada doce horas", "250 miligramitos"]) {
-      expect(incompleteMedications({ prescription: [{ ...complete, dosis: g(bad, bad, [3]) }] })).toEqual([{ index: 0, missing: ["dosis"] }]);
-    }
+  it("V6-b: the per-take amount accepts fractions and number words (media = ½ = 0.5 = 1/2, un cuarto = ¼, una … diez), each with a unit; a non-quantity word or a bare unit stays incomplete (fail-closed)", () => {
+    const complete = { medicamento: g("Clindamicina", "Clindamicina", [3]), frecuencia: g("cada 12 horas", "cada 12 horas", [3]), duracion: g("7 días", "7 días", [3]) };
+    const good = [
+      "250 mg", "250 miligramos", "1 tableta", "2 tabletas", "una tableta", "un comprimido", "dos cápsulas", "5 mililitros", "dos gotas",
+      "media tableta", "medio comprimido", "la mitad de una tableta", "un cuarto de tableta", "cuartito de tableta", "un octavo de tableta",
+      "tres cuartos de tableta", "una y media tabletas", "un tercio de tableta", "1/2 tableta", "0.5 tableta", "½ tableta", "¼ comprimido", "1 1/2 tabletas",
+    ];
+    for (const d of good) expect(incompleteMedications({ prescription: [{ ...complete, dosis: g(d, d, [3]) }] }), d).toEqual([]);
+    // A numeral counts ONLY next to the unit: a vague object in between is not a quantity (fail-closed). Plus the
+    // earlier bad cases, and «medianamente tableta» (pins the \b: «media» inside a longer word is not a fraction word).
+    const bad = [
+      "un poquito de tableta", "un pedazo de la tableta", "una parte de la tableta", "un chorrito de mililitros", "una dosis alta de tabletas",
+      "un poquito", "bastante", "una dosis alta", "lo normal", "medianamente tableta", "tableta", "250", "miligramos", "miligramos cada doce horas", "250 miligramitos",
+    ];
+    for (const d of bad) expect(incompleteMedications({ prescription: [{ ...complete, dosis: g(d, d, [3]) }] }), d).toEqual([{ index: 0, missing: ["dosis"] }]);
   });
 
   it("the schema has no price field and rejects one at any level (strict)", () => {

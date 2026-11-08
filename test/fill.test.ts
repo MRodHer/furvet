@@ -138,7 +138,7 @@ describe("AI draft with grounding (V7-B, V8-B, V18-B, E12)", () => {
     await expect(env.DB.prepare("INSERT INTO consult_versions (id, consult_id, kind, body, grounding, created_by) VALUES (?1, ?2, 'ai_draft', 'not json', '{}', 't')").bind(crypto.randomUUID(), id).run()).rejects.toThrow();
   });
 
-  it("dosis: the prompt asks for the digit concentration with the per-dose amount; «250 miligramos, una tableta» is complete, «una tableta» alone stays incomplete (fail-closed)", async () => {
+  it("dosis: the prompt splits strength from the per-take amount and keeps the literal quote; «250 miligramos, una tableta» is complete, a vague «un poco» stays incomplete (fail-closed)", async () => {
     const { id } = await seedTranscribed();
     await env.DB.prepare("INSERT INTO transcript_segments (consult_id, idx, start_ms, end_ms, speaker, text) VALUES (?1, 5, 15000, 20000, 'doctor', 'Amoxicilina de 250 miligramos, una tableta cada 12 horas durante 7 días.')").bind(id).run();
     const rx = (dosis: string) => ({
@@ -155,13 +155,15 @@ describe("AI draft with grounding (V7-B, V8-B, V18-B, E12)", () => {
     expect(out.grounding.incomplete_medications).toEqual([]);
     expect(out.grounding.discarded).toEqual([]);
     const sys = String(JSON.parse(calls.find((c) => c.key === PP.claude)!.body).system);
+    expect(sys).toMatch(/Separa la concentración de la cantidad por toma/); // the split instruction must stay (pinned so it can't be silently dropped)
     expect(sys).toMatch(/concentraci[oó]n dicha con cifras/);
     expect(sys).toMatch(/deja el campo dosis fuera/);
 
-    // Same consult, model copies only the words: no digits → the medication blocks approval until the doctor completes it.
+    // Same consult, model writes a vague, non-quantitative dose («un poco»): no quantity token → blocks approval
+    // until the doctor completes it. («una tableta» would now be complete — a number word with a unit.)
     const { id: id2 } = await seedTranscribed();
     await env.DB.prepare("INSERT INTO transcript_segments (consult_id, idx, start_ms, end_ms, speaker, text) VALUES (?1, 5, 15000, 20000, 'doctor', 'Amoxicilina de 250 miligramos, una tableta cada 12 horas durante 7 días.')").bind(id2).run();
-    const { app: app2 } = makeApp({ [PP.claude]: () => json(toolUse("fill_consult", { ...EMPTY, prescription: [rx("una tableta")] })) });
+    const { app: app2 } = makeApp({ [PP.claude]: () => json(toolUse("fill_consult", { ...EMPTY, prescription: [rx("un poco")] })) });
     const out2 = (await (await fill(app2, id2)).json()) as { grounding: { incomplete_medications: unknown[] } };
     expect(out2.grounding.incomplete_medications).toEqual([{ index: 0, missing: ["dosis"] }]);
   });
