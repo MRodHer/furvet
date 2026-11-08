@@ -293,4 +293,6 @@ run_mutant "numeral counts without adjacency to the unit: «un poquito de tablet
   's#NUMERAL_UNIT_RE.test(v)#/\\b(un|una|dos)\\b/i.test(v)#' test/grounding.test.ts || status=1
 run_mutant "food legend printed for every drug, not only antibiotics/NSAIDs (rx-vet-format)" src/reports/render.ts \
   's/if (withFood(v(m.medicamento)))/if (true)/' test/rx_layout.test.ts || status=1
+run_mutant "/console.html served without the doctor credential: notFound serves it as a static asset (audit M4)" src/app.ts \
+  '\#app.get("/console.html", doctorAuth#d' test/console_auth.test.ts || status=1
 exit $status

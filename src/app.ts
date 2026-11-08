@@ -87,6 +87,7 @@ export function createApp(deps: Deps = DEFAULT_DEPS) {
   };
   const page = (file: string) => (c: { env: Env; req: { url: string } }) => serveAsset(c.env, new Request(new URL(file, c.req.url)));
   app.get("/console", doctorAuth(), page("/console.html"));
+  app.get("/console.html", doctorAuth(), page("/console.html")); // the .html path too: notFound would otherwise serve it as a static asset, unauthenticated (audit M4)
   app.get("/cobros", doctorAuth(), page("/cobros.html"));
   app.get("/cobros.html", doctorAuth(), page("/cobros.html"));
   app.notFound((c) => (c.req.method === "GET" || c.req.method === "HEAD" ? serveAsset(c.env, c.req.raw) : c.text("404 Not Found", 404)));
