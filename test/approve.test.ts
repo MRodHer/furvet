@@ -2,7 +2,7 @@ import { env } from "cloudflare:test";
 import { afterEach, describe, expect, it } from "vitest";
 import { ApprovedConsult, ConsultDraft, FILL_CONSULT_TOOL } from "../src/clinical/schema";
 import { makePayPal, PayPalError } from "../src/paypal";
-import { approvedBody, assertNoPii, captureLogs, claudeToolFake, count, depositCaptured, doctorEnv, doctorHeaders, makeApp, paypalFakes, PP, seedConsult, uniqueOrderFake, withEnv } from "./helpers";
+import { ai, approvedBody, assertNoPii, captureLogs, claudeToolFake, count, depositCaptured, doctorEnv, doctorHeaders, makeApp, paypalFakes, PP, seedConsult, SEG1, uniqueOrderFake, withEnv } from "./helpers";
 
 const fakes = () => ({ ...paypalFakes(), ...uniqueOrderFake, ...claudeToolFake(["Su perro tiene gastroenteritis leve; amoxicilina 250 mg cada 12 h por 7 días."]) });
 const post = (app: ReturnType<typeof makeApp>["app"], consult: string, body: unknown, e = doctorEnv(), headers: Record<string, string> = doctorHeaders({ "Content-Type": "application/json" })) =>
@@ -56,7 +56,7 @@ describe("POST /approve (V7-C, V8, V9, D.4)", () => {
     const logs = captureLogs();
     restore = logs.restore;
     const { app, calls } = makeApp(fakes());
-    const body = approvedBody(ids, { billable: [{ catalog_item_id: ids["MED-AMOXI"], quantity: { value: 2, source: "ai", segment_ids: [1], quote: "dos cajas" } }] });
+    const body = approvedBody(ids, { billable: [{ catalog_item_id: ids["MED-AMOXI"], quantity: ai(2) }] });
     // 2 via billable + 1 via prescription.catalog_item_id = 3 × 125.25 would be 1206.25; the V9 figure uses 2 → drop the rx mapping.
     body.prescription[0] = { ...body.prescription[0], catalog_item_id: undefined };
     const res = await post(app, consult, body);
@@ -524,6 +524,47 @@ describe("the rx is printed by the doctor, never sent (ADENDA 2)", () => {
     const rxText = new TextDecoder("latin1").decode(await pdf.arrayBuffer());
     expect(rxText).toContain("1. amoxicilina");
     expect(rxText).toContain("Original para el médico: imprimir, firmar y entregar.");
+  });
+});
+
+describe("server-side AI re-anchor + state gate (audit M2)", () => {
+  const seg = (consult: string, speaker: string, text = SEG1) =>
+    env.DB.prepare("UPDATE transcript_segments SET speaker = ?2, text = ?3 WHERE consult_id = ?1 AND idx = 1").bind(consult, speaker, text).run();
+
+  it("M2: an AI leaf whose quote is not in the stored transcript, or that cites a nonexistent segment, refuses the whole approval (422), writes nothing and calls nobody", async () => {
+    for (const bad of [
+      { subjective: { motivo_consulta: { value: "otra cosa", source: "ai", segment_ids: [1], quote: "una frase que nadie dijo" } } }, // fabricated quote
+      { vitals: { temperatura: { ...ai(39.5), segment_ids: [9] } } }, // segment 9 does not exist
+    ]) {
+      const { consult, conv, ids } = await seedConsult();
+      const { app, calls } = makeApp(fakes());
+      const res = await post(app, consult, approvedBody(ids, bad));
+      expect(res.status).toBe(422);
+      expect(await res.json()).toMatchObject({ error: "ai_leaf_ungrounded" });
+      expect(await count("consult_bills", "consult_id = ?1", consult)).toBe(0);
+      expect((await messages(conv)).results).toHaveLength(0);
+      expect(calls.length).toBe(0); // the model is never called: the refusal is before plainExplanation
+    }
+  });
+
+  it("M2+M1: a prescription AI leaf that cites an OWNER-spoken segment is refused server-side (the console badge cannot launder owner speech into the rx)", async () => {
+    const { consult, conv, ids } = await seedConsult();
+    await seg(consult, "owner"); // the same segment, but now attributed to the owner
+    const { app } = makeApp(fakes());
+    const res = await post(app, consult, approvedBody(ids));
+    expect(res.status).toBe(422);
+    expect(await res.json()).toMatchObject({ error: "ai_leaf_ungrounded" });
+    expect(await count("consult_bills", "consult_id = ?1", consult)).toBe(0);
+    expect((await messages(conv)).results).toHaveLength(0);
+  });
+
+  it("M2: AI evidence requires a real transcription — approving a consult still `recording` with AI leaves → 409; a doctor-only body (manual approval) still goes through", async () => {
+    const { consult, ids } = await seedConsult();
+    await env.DB.prepare("UPDATE consults SET status = 'recording' WHERE id = ?1").bind(consult).run();
+    const { app } = makeApp(fakes());
+    expect((await post(app, consult, approvedBody(ids))).status).toBe(409); // has ai leaves, not transcribed
+    const manual = { subjective: {}, vitals: {}, physical_exam: {}, assessment: {}, plan: {}, prescription: [], vaccines: [], billable: [] };
+    expect((await post(app, consult, manual)).status).toBe(201); // 0 ai leaves → allowed in any state
   });
 });
 

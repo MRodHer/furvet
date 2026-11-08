@@ -179,12 +179,18 @@ export const doctorHeaders = (extra: Record<string, string> = {}) => ({ Authoriz
 export const doctorEnv = (overrides: Partial<Env> = {}) => withEnv({ ...DOCTOR, ...overrides });
 
 /** Booking + consult (0002) + a priced catalog. Returns ids and the catalog ids by sku. */
+// One doctor-spoken transcript segment (idx 1) that literally carries every phrase and number the
+// default AI leaves of approvedBody quote, so /approve's server-side re-anchor (audit M2) grounds the
+// happy path. It names no owner words, so redactOwner leaves it unchanged.
+export const SEG1 = "Vómito desde ayer, temperatura 39.5, amoxicilina 250 mg cada 12 h durante 7 días, 1 o 2 cajas.";
+
 export async function seedConsult(opts: { depositCents?: number; prices?: Record<string, number> } = {}) {
   const booking = await seedBooking(opts.depositCents ?? 20000);
   const consult = crypto.randomUUID();
   const prices = { "VAC-RABIA": 38050, "MED-AMOXI": 12525, ...opts.prices };
   await env.DB.batch([
     env.DB.prepare("INSERT INTO consults (id, appointment_id, status) VALUES (?1, ?2, 'drafted')").bind(consult, booking.appt),
+    env.DB.prepare("INSERT INTO transcript_segments (consult_id, idx, start_ms, end_ms, speaker, text) VALUES (?1, 1, 0, 1000, 'doctor', ?2)").bind(consult, SEG1),
     ...Object.entries(prices).map(([sku, cents]) =>
       env.DB.prepare(
         "INSERT INTO catalog_items (id, sku, name, category, price_cents) VALUES (?1, ?2, ?2, 'otro', ?3) ON CONFLICT(sku) DO UPDATE SET price_cents = excluded.price_cents, active = 1",
@@ -196,8 +202,8 @@ export async function seedConsult(opts: { depositCents?: number; prices?: Record
   return { ...booking, consult, ids };
 }
 
-const ai = (value: unknown) => ({ value, source: "ai", segment_ids: [1], quote: "dicho en consulta" });
-const doc = (value: unknown) => ({ value, source: "doctor" });
+export const ai = (value: unknown) => ({ value, source: "ai", segment_ids: [1], quote: SEG1 });
+export const doc = (value: unknown) => ({ value, source: "doctor" });
 
 /** V9 fixture: consulta 450.00 + vacuna 380.50 + 2 × 125.25 = 1081.00 */
 export function approvedBody(ids: Record<string, string>, extra: Record<string, unknown> = {}): Record<string, unknown> & { prescription: Record<string, unknown>[] } {

@@ -297,4 +297,8 @@ run_mutant "/console.html served without the doctor credential: notFound serves 
   '\#app.get("/console.html", doctorAuth#d' test/console_auth.test.ts || status=1
 run_mutant "prescription/vaccine leaf anchors on a non-doctor segment: owner-spoken drug passes grounding (audit M1)" src/clinical/grounding.ts \
   's/DOCTOR_ONLY.test(path) &&/false \&\&/' test/grounding.test.ts || status=1
+run_mutant "/approve stops re-anchoring AI leaves: a fabricated quote is stored as AI evidence (audit M2)" src/routes/approve.ts \
+  's/if (ungrounded.length) {/if (false) {/' test/approve.test.ts || status=1
+run_mutant "/approve drops the state gate: AI leaves accepted on a never-transcribed consult (audit M2)" src/routes/approve.ts \
+  's/hasAiLeaf(body) && consult.status/false \&\& consult.status/' test/approve.test.ts || status=1
 exit $status
