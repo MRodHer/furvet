@@ -3,9 +3,9 @@
 *Because every patient is someone's fur bestie.* Families pay with PayPal; the clinic keeps the clinical record and the money honest.
 
 > Built for the PayPal AI Hackathon 2026. Runs 100% in PayPal **sandbox**: no real money moves.
-> Everything described below as *built* is in this repository, covered by the test suite (199 tests) and deployed at the live URL. The one item marked *not built* (a real WhatsApp channel) is the only part of the vision that is not in the code.
+> Everything described below as *built* is in this repository, covered by the test suite (262 tests) and deployed at the live URL. The one item marked *not built* (a real WhatsApp channel) is the only part of the vision that is not in the code.
 
-**Live demo:** <https://furvet.mauricio-rodher.workers.dev> · **Video:** `<YouTube URL>`
+**Live demo:** <https://furvet.mauricio-rodher.workers.dev> · **Video:** <https://youtu.be/QzQe276LBy8>
 
 ## Try it (for judges)
 
@@ -55,7 +55,7 @@ Devpost requires this disclosure. The git tag `pre-hackathon` marks the copied c
 - The *pattern* in `src/agent/claude.ts` (forced `tool_choice` + strict schema on the tool input) and the *rules* of `src/agent/run.ts` (fail-closed guards, one place talks to Claude, silence instead of invented replies) come from the author's earlier Python WhatsApp sales agent; the TypeScript is new.
 - The clinical field names and enums (SOAP sections, vitals, prescription, vaccines) follow the author's earlier vet-clinic app; no component code was copied.
 
-**Built during the hackathon (Nov 4 onward):** everything else — the Worker, D1 schema and migrations, money/ledger modules, PayPal client, webhook, booking tools, chat simulator, board, doctor auth and console, transcription, speaker roles, clinical schema, grounding validator, bill, delivery (tokens, PDFs, report gate), plain-language explanation, clinic subscription (PayPal Subscriptions + webhook state machine), hardening, tests and scripts.
+**Built during the hackathon (Nov 3 onward):** everything else — the Worker, D1 schema and migrations, money/ledger modules, PayPal client, webhook, booking tools, chat simulator, board, doctor auth and console, transcription, speaker roles, clinical schema, grounding validator, bill, delivery (tokens, PDFs, report gate), plain-language explanation, clinic subscription (PayPal Subscriptions + webhook state machine), hardening, tests and scripts.
 
 ## Setup
 
@@ -68,8 +68,8 @@ npx wrangler d1 execute furvet --local --file=seed.sql
 # until the clinic sets its prices (cents, tax included):
 npx wrangler d1 execute furvet --local --command "UPDATE catalog_items SET price_cents = 20000 WHERE sku = 'ANTICIPO-CONSULTA'; UPDATE catalog_items SET price_cents = 45000 WHERE sku = 'CONSULTA-GENERAL'"
 npm run dev                              # http://localhost:8787/sim · /console and /cobros behind the doctor credential
-npm test                                 # static checks (scripts/checks.sh) + 199 Vitest tests on a real local D1
-bash scripts/mutants.sh                  # 73 injected defects; each must turn the suite red
+npm test                                 # static checks (scripts/checks.sh) + 262 Vitest tests on a real local D1
+bash scripts/mutants.sh                  # 143 injected defects; each must turn the suite red
 ```
 
 Deploy: `npx wrangler d1 create furvet` (paste the id into `wrangler.toml`), `npx wrangler r2 bucket create furvet-files`, `npx wrangler secret put` for each secret listed in `wrangler.toml`, `npm run db:migrate:remote`, seed and price the remote catalog the same way with `--remote`, `npm run deploy`. Register the webhook URL `https://<worker>/api/v1/paypal/webhook` in the PayPal sandbox app with `CHECKOUT.ORDER.APPROVED`, `PAYMENT.CAPTURE.COMPLETED`, `PAYMENT.CAPTURE.DENIED`, and for the clinic subscription `BILLING.SUBSCRIPTION.ACTIVATED`, `BILLING.SUBSCRIPTION.SUSPENDED`, `BILLING.SUBSCRIPTION.CANCELLED`, `BILLING.SUBSCRIPTION.EXPIRED`, `BILLING.SUBSCRIPTION.PAYMENT.FAILED`, `PAYMENT.SALE.COMPLETED`. Clinic subscription (the AI draft is gated on it): create the plan once with `PAYPAL_CLIENT_ID=… PAYPAL_CLIENT_SECRET=… bash scripts/paypal-plan.sh` ($999.00 MXN/month, sandbox) and deploy with `--var PAYPAL_PLAN_ID:P-…`; `--var SUBSCRIPTION_REQUIRED:false` switches the gate off in an emergency (default on).
