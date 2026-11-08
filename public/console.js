@@ -216,9 +216,10 @@
       data = { error: `sin conexión (${e.name})` };
     }
     sending = false;
-    if (res.status === 409) {
+    if (res.status === 409 && data.error === "this consult already has a transcript") {
       // The first POST landed and only its answer was lost: the server already holds the transcript, so the blob is
-      // dropped and the persisted state is painted (a retry would answer 409 forever).
+      // dropped and the persisted state is painted (a retry would answer 409 forever). Any other 409 (consent missing,
+      // consults.ts) keeps the audio: the retry can succeed once the cause is fixed.
       pending = null;
       setStatus("El audio ya estaba transcrito.", "ok");
       await refresh();
