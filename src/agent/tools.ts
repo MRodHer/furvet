@@ -165,9 +165,33 @@ async function bookAppointment(ctx: ToolContext, p: z.infer<typeof BookAppointme
   const appointmentId = crypto.randomUUID();
   const now = ctx.deps.now();
   const birthDate = approxBirthDate(now, p.age_years, p.age_months);
-  // Atomic claim: each INSERT only runs if the previous statement changed exactly one row.
+  // One unpaid appointment per chat: a booking while one is pending MOVES it (the owner picked another
+  // hour, or the model re-sent the call) instead of leaving a second pending row and an orphaned slot.
+  const pending = await ctx.env.DB.prepare("SELECT id, slot_id FROM appointments WHERE conversation_id = ?1 AND status = 'pending_deposit' LIMIT 1")
+    .bind(ctx.conversationId)
+    .first<{ id: string; slot_id: string }>();
+  if (pending) {
+    if (pending.slot_id === p.slot_id) return booked(pending.id);
+    // Atomic move: the UPDATE only applies while the row is still ours, still pending, still on the old slot and the
+    // new slot is free; the next statements run only if the previous one changed exactly one row.
+    const moved = await ctx.env.DB.batch([
+      ctx.env.DB.prepare(
+        "UPDATE appointments SET slot_id = ?1 WHERE id = ?2 AND conversation_id = ?3 AND status = 'pending_deposit' AND slot_id = ?4 AND EXISTS (SELECT 1 FROM slots WHERE id = ?1 AND taken = 0 AND starts_at > ?5)",
+      ).bind(p.slot_id, pending.id, ctx.conversationId, pending.slot_id, now.toISOString()),
+      ctx.env.DB.prepare("UPDATE slots SET taken = 1 WHERE id = ?1 AND changes() = 1").bind(p.slot_id),
+      ctx.env.DB.prepare("UPDATE slots SET taken = 0 WHERE id = ?1 AND changes() = 1").bind(pending.slot_id),
+    ]);
+    if ((moved[2]?.meta.changes ?? 0) !== 1) return "Ese horario ya se ocupó. Pide la lista de horarios otra vez.";
+    log("appointment_moved", { appointment_id: pending.id, conversation_id: ctx.conversationId });
+    return booked(pending.id);
+  }
+  // Atomic claim: each INSERT only runs if the previous statement changed exactly one row. The claim itself
+  // is refused while this chat already has an unpaid appointment (two concurrent calls that both saw none):
+  // guarding the FIRST statement leaves no taken slot and no pet behind.
   const results = await ctx.env.DB.batch([
-    ctx.env.DB.prepare("UPDATE slots SET taken = 1 WHERE id = ?1 AND taken = 0 AND starts_at > ?2").bind(p.slot_id, now.toISOString()),
+    ctx.env.DB.prepare(
+      "UPDATE slots SET taken = 1 WHERE id = ?1 AND taken = 0 AND starts_at > ?2 AND NOT EXISTS (SELECT 1 FROM appointments WHERE conversation_id = ?3 AND status = 'pending_deposit')",
+    ).bind(p.slot_id, now.toISOString(), ctx.conversationId),
     ctx.env.DB.prepare("INSERT INTO pets (id, contact_id, name, species, breed, sex, birth_date) SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7 WHERE changes() = 1").bind(petId, ctx.contactId, p.pet_name, p.species, p.breed ?? null, p.sex ?? null, birthDate),
     ctx.env.DB.prepare(
       "INSERT INTO appointments (id, slot_id, contact_id, pet_id, conversation_id) SELECT ?1, ?2, ?3, ?4, ?5 WHERE changes() = 1",
