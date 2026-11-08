@@ -281,3 +281,35 @@ describe("audio upload (V1, V2, V3, V19) — strict order 503 → 409 → 413 �
     expect(list.find((a) => a.id === b.appt)?.consult_id).toBe(id);
   });
 });
+
+describe("owner-consent snapshot sync on GET /:id (audit m5/m6/m7)", () => {
+  const getDetail = (app: ReturnType<typeof makeApp>["app"], id: string) => app.request(`/api/v1/consults/${id}`, { headers: DOCTOR_AUTH }, env);
+
+  it("m5: the snapshot is first-copy-wins — a LATER change in the conversation does NOT overwrite the consult's own copy", async () => {
+    const { app } = makeApp({});
+    const { id, conv } = await createConsult(app, env, { ownerConsent: true });
+    const before = await env.DB.prepare("SELECT owner_consent_at FROM consults WHERE id = ?1").bind(id).first<{ owner_consent_at: string | null }>();
+    expect(before?.owner_consent_at).toBeTruthy(); // snapshotted from the conversation at creation
+    await env.DB.prepare("UPDATE conversations SET owner_consent_at = '2027-01-01T00:00:00.000Z', owner_consent_version = 'v2' WHERE id = ?1").bind(conv).run();
+    await getDetail(app, id); // GET triggers syncOwnerConsent
+    const after = await env.DB.prepare("SELECT owner_consent_at FROM consults WHERE id = ?1").bind(id).first<{ owner_consent_at: string | null }>();
+    expect(after?.owner_consent_at).toBe(before?.owner_consent_at); // unchanged: the first copy wins (append-only evidence)
+  });
+
+  it("m6: syncing a late owner consent copies BOTH the timestamp AND the version from the conversation", async () => {
+    const { app } = makeApp({});
+    const { id, conv } = await createConsult(app, env, { ownerConsent: false }); // snapshot is NULL at creation
+    await env.DB.prepare("UPDATE conversations SET owner_consent_at = '2026-11-06T08:00:00.000Z', owner_consent_version = 'owner-v7' WHERE id = ?1").bind(conv).run();
+    await getDetail(app, id); // GET triggers syncOwnerConsent
+    const row = await env.DB.prepare("SELECT owner_consent_at, owner_consent_version FROM consults WHERE id = ?1").bind(id).first<{ owner_consent_at: string | null; owner_consent_version: string | null }>();
+    expect(row).toEqual({ owner_consent_at: "2026-11-06T08:00:00.000Z", owner_consent_version: "owner-v7" }); // both columns move together
+  });
+
+  it("m7: GET /:id (not only /audio) picks up a consent given after the consult opened, visible in the response", async () => {
+    const { app } = makeApp({});
+    const { id, conv } = await createConsult(app, env, { ownerConsent: false });
+    await env.DB.prepare("UPDATE conversations SET owner_consent_at = '2026-11-07T07:00:00.000Z', owner_consent_version = 'v1-2026-11-04' WHERE id = ?1").bind(conv).run();
+    const d = (await (await getDetail(app, id)).json()) as { consult: { owner_consent_at: string | null } };
+    expect(d.consult.owner_consent_at).toBe("2026-11-07T07:00:00.000Z"); // the GET path synced it, so the console sees it
+  });
+});

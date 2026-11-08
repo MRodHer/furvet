@@ -566,6 +566,44 @@ describe("server-side AI re-anchor + state gate (audit M2)", () => {
     const manual = { subjective: {}, vitals: {}, physical_exam: {}, assessment: {}, plan: {}, prescription: [], vaccines: [], billable: [] };
     expect((await post(app, consult, manual)).status).toBe(201); // 0 ai leaves → allowed in any state
   });
+
+  it("m2: an AI leaf grounds only against THIS consult's transcript — a quote taken from ANOTHER consult's segment is refused (422)", async () => {
+    const a = await seedConsult();
+    const b = await seedConsult();
+    // Consult A gets a distinctive doctor segment (idx 2) that B never had.
+    await env.DB.prepare("INSERT INTO transcript_segments (consult_id, idx, start_ms, end_ms, speaker, text) VALUES (?1, 2, 1000, 2000, 'doctor', ?2)")
+      .bind(a.consult, "Lesión en la pata izquierda.").run();
+    const { app, calls } = makeApp(fakes());
+    // B approves a body whose motivo_consulta cites segment 2 — which lives in A, not in B.
+    const body = approvedBody(b.ids, { subjective: { motivo_consulta: { value: "lesión", source: "ai", segment_ids: [2], quote: "Lesión en la pata izquierda" } } });
+    const res = await post(app, b.consult, body);
+    expect(res.status).toBe(422);
+    expect(await res.json()).toMatchObject({ error: "ai_leaf_ungrounded", paths: expect.arrayContaining(["subjective.motivo_consulta"]) });
+    expect(await count("consult_bills", "consult_id = ?1", b.consult)).toBe(0);
+    expect(calls.length).toBe(0); // refused before the model is ever called
+  });
+
+  it("m3: the re-anchor redacts the stored transcript exactly as /fill did, so an AI quote carrying the redacted owner name still grounds (201)", async () => {
+    const { consult, conv } = await seedConsult();
+    // The doctor's segment names the owner; D1 keeps it raw, but /fill grounded the AI against the REDACTED copy,
+    // so the stored quote reads «el dueño …». The re-anchor must redact the same way or the quote would never match.
+    await env.DB.batch([
+      env.DB.prepare("UPDATE contacts SET name = 'Laura' WHERE id = ?1").bind(conv),
+      env.DB.prepare("UPDATE transcript_segments SET text = 'Laura comenta que Firulais no come.' WHERE consult_id = ?1 AND idx = 1").bind(consult),
+    ]);
+    const body = { subjective: { motivo_consulta: { value: "no come", source: "ai", segment_ids: [1], quote: "el dueño comenta que Firulais no come" } }, vitals: {}, physical_exam: {}, assessment: {}, plan: {}, prescription: [], vaccines: [], billable: [] };
+    const { app } = makeApp(fakes());
+    const res = await post(app, consult, body);
+    expect(res.status).toBe(201); // redacted quote matches the redacted stored segment
+    expect(await count("consult_bills", "consult_id = ?1", consult)).toBe(1);
+  });
+
+  it("m4-gate: a `transcribed` consult (AI drafted straight from the transcription) is still approvable with AI leaves", async () => {
+    const { consult, ids } = await seedConsult();
+    await env.DB.prepare("UPDATE consults SET status = 'transcribed' WHERE id = ?1").bind(consult).run();
+    const { app } = makeApp(fakes());
+    expect((await post(app, consult, approvedBody(ids))).status).toBe(201); // 'transcribed' is an allowed state, not only 'drafted'
+  });
 });
 
 describe("AI cost gate on /approve (audit m4)", () => {

@@ -103,6 +103,19 @@ describe("grounding validator (V4, V5, V6)", () => {
     expect(validateGrounding(draftWith({ subjective: { motivo_consulta: g("no quiere comer", "no quiere comer", [0]) } }), [{ idx: 0, text: "no quiere comer", speaker: "owner" }], new Set()).body.subjective.motivo_consulta).toBeTruthy();
   });
 
+  it("M1b: a prescription leaf citing BOTH a doctor and an owner segment is discarded — the WHOLE citation must be the doctor's (.every, not .some)", () => {
+    // The leaf is well grounded (quote in the cited segments, no numbers), so the ONLY reason it may drop
+    // is the speaker rule. With a mixed citation .every(doctor) is false → dropped; a .some would keep it.
+    const segsMix = [
+      { idx: 0, text: "Le vamos a dar amoxicilina.", speaker: "doctor" },
+      { idx: 1, text: "En casa le dábamos amoxicilina también.", speaker: "owner" },
+    ];
+    const draft = draftWith({ prescription: [{ medicamento: g("amoxicilina", "amoxicilina", [0, 1]) }] });
+    const { body, report } = validateGrounding(draft, segsMix, new Set());
+    expect(body.prescription).toHaveLength(0); // not every cited segment is the doctor's → the leaf is dropped
+    expect(report.discarded).toContainEqual({ path: "prescription[0].medicamento", reason: "quote_not_by_doctor", quote: "amoxicilina" });
+  });
+
   it("V6: a medication needs a quantity + unit in the dose, and a number + unit in frequency and duration", () => {
     const complete = { medicamento: g("amoxicilina", "amoxicilina", [3]), dosis: g("250 mg", "250 mg", [3]), frecuencia: g("cada 12 horas", "cada 12 horas", [3]), duracion: g("7 días", "7 días", [3]) };
     expect(incompleteMedications({ prescription: [complete] })).toEqual([]);

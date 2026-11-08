@@ -309,6 +309,21 @@ run_mutant "/approve calls the model without the subscription gate (cost leak) (
   's/(await aiGate(env)) === "ok" ? env.ANTHROPIC_API_KEY : undefined/env.ANTHROPIC_API_KEY/' test/approve.test.ts || status=1
 run_mutant "/audio labels speakers without the subscription gate (cost leak) (audit m4)" src/routes/consults.ts \
   's/ && (await aiGate(env)) === "ok"//' test/audio.test.ts || status=1
+# ---- audit test-coverage ratchets (m1-m7): the narrow survivors of the fix-audit-carril-b grading ----
+run_mutant "prescription leaf with a MIXED doctor+owner citation passes when .every becomes .some (audit m1)" src/clinical/grounding.ts \
+  's/field.segment_ids.every((id)/field.segment_ids.some((id)/' test/grounding.test.ts || status=1
+run_mutant "/approve re-anchor reads EVERY consult's transcript: evidence from another consult grounds (audit m2)" src/routes/approve.ts \
+  's/transcript_segments WHERE consult_id = ?1 ORDER BY idx ASC/transcript_segments WHERE (consult_id = ?1 OR 1=1) ORDER BY idx ASC/' test/approve.test.ts || status=1
+run_mutant "/approve re-anchor skips redactOwner: an AI quote with the redacted owner name no longer matches (audit m3)" src/routes/approve.ts \
+  's/text: redactOwner(s.text, owner)/text: s.text/' test/approve.test.ts || status=1
+run_mutant "/approve state gate drops 'transcribed': a transcribed consult with AI leaves is refused 409 (audit m4-gate)" src/routes/approve.ts \
+  's/consult.status !== "transcribed" \&\& //' test/approve.test.ts || status=1
+run_mutant "owner-consent sync without the first-copy-wins guard: a later conversation consent overwrites the consult (audit m5)" src/routes/consults.ts \
+  's/ AND consults.owner_consent_at IS NULL//' test/audio.test.ts || status=1
+run_mutant "owner-consent sync copies only the timestamp, not the version (audit m6)" src/routes/consults.ts \
+  's/owner_consent_version = (SELECT v.owner_consent_version FROM conversations v JOIN appointments a ON a.conversation_id = v.id WHERE a.id = consults.appointment_id)/owner_consent_version = owner_consent_version/' test/audio.test.ts || status=1
+run_mutant "GET /:id stops syncing a late owner consent (only /audio did) (audit m7)" src/routes/consults.ts \
+  's/await syncOwnerConsent(c.env, id.data);//' test/audio.test.ts || status=1
 run_mutant "in-flight flag never released: the button stays locked and the retry is dead (B1)" public/console.js \
   's/^    sending = false;$/    void 0;/' test/frontend_audit.test.ts || status=1
 run_mutant "retry fires for a pending audio of another consult (B1)" public/console.js \
