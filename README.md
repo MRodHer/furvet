@@ -68,7 +68,7 @@ npx wrangler d1 execute furvet --local --file=seed.sql
 # until the clinic sets its prices (cents, tax included):
 npx wrangler d1 execute furvet --local --command "UPDATE catalog_items SET price_cents = 20000 WHERE sku = 'ANTICIPO-CONSULTA'; UPDATE catalog_items SET price_cents = 45000 WHERE sku = 'CONSULTA-GENERAL'"
 npm run dev                              # http://localhost:8787/sim · /console and /cobros behind the doctor credential
-npm test                                 # static checks (scripts/checks.sh) + 199 Vitest tests on a real local D1
+npm test                                 # static checks (scripts/checks.sh) + 262 Vitest tests on a real local D1
 bash scripts/mutants.sh                  # 143 injected defects; each must turn the suite red
 ```
 
