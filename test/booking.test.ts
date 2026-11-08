@@ -111,10 +111,202 @@ describe("booking + deposit tools (E7, E8, E9, V17)", () => {
     const c = ctx(conv);
     const input = { slot_id: slot, pet_name: "Firulais", species: "perro" };
     const [a, b] = await Promise.all([executeTool(c, "book_appointment", input), executeTool(c, "book_appointment", input)]);
-    const wins = [a, b].filter((x) => x.includes("appointment_id")).length;
-    expect(wins).toBe(1);
+    // Both calls come from the same chat: the loser gets the winner's id back (idempotent), never a second row.
+    const ids = [a, b].map((x) => /appointment_id: ([0-9a-f-]{36})/.exec(x)?.[1]);
+    expect(ids[0]).toBeDefined();
+    expect(ids[1]).toBe(ids[0]);
     expect(await count("appointments", "conversation_id = ?1", conv)).toBe(1);
     expect(await count("pets", "contact_id = ?1", conv)).toBe(1);
+  });
+
+  describe("re-sent booking (prod bug: the bot asked «¿genero la liga?», then re-booked and orphaned the slot)", () => {
+    async function seed(conv: string, slot: string) {
+      await env.DB.batch([
+        env.DB.prepare("INSERT INTO contacts (id) VALUES (?1)").bind(conv),
+        env.DB.prepare("INSERT INTO conversations (id, contact_id) VALUES (?1, ?1)").bind(conv),
+        env.DB.prepare("INSERT OR IGNORE INTO slots (id, starts_at) VALUES (?1, '2026-11-10T11:00:00.000Z')").bind(slot),
+      ]);
+    }
+    const idOf = (out: string) => /appointment_id: ([0-9a-f-]{36})/.exec(out)?.[1];
+
+    it("same slot, same chat → the same appointment_id again, one appointment, one pet, and create_deposit accepts it", async () => {
+      const conv = crypto.randomUUID();
+      const slot = crypto.randomUUID();
+      await seed(conv, slot);
+      const c = ctx(conv);
+      const input = { slot_id: slot, pet_name: "Firulais", species: "perro" };
+      const first = await executeTool(c, "book_appointment", input);
+      const again = await executeTool(c, "book_appointment", input);
+      expect(idOf(first)).toBeDefined();
+      expect(again).not.toMatch(/ya se ocupó/);
+      expect(idOf(again)).toBe(idOf(first));
+      expect(await count("appointments", "conversation_id = ?1", conv)).toBe(1);
+      expect(await count("pets", "contact_id = ?1", conv)).toBe(1);
+      // create_deposit is keyed by that same id (unchanged code): the chat gets the link for the existing booking.
+      expect(await executeTool(c, "create_deposit", { appointment_id: idOf(again) })).not.toBe("Cita inválida.");
+    });
+
+    it("same slot, ANOTHER chat → still «ya se ocupó» and the other chat's appointment id never leaks", async () => {
+      const convA = crypto.randomUUID();
+      const convB = crypto.randomUUID();
+      const slot = crypto.randomUUID();
+      await seed(convA, slot);
+      await seed(convB, slot);
+      const a = await executeTool(ctx(convA), "book_appointment", { slot_id: slot, pet_name: "Firulais", species: "perro" });
+      const b = await executeTool(ctx(convB), "book_appointment", { slot_id: slot, pet_name: "Luna", species: "gato" });
+      expect(b).toMatch(/ya se ocupó/);
+      expect(b).not.toContain(idOf(a)!);
+      expect(await count("appointments", "conversation_id = ?1", convB)).toBe(0);
+    });
+
+    const slotRow = (id: string) => env.DB.prepare("SELECT taken FROM slots WHERE id = ?1").bind(id).first<{ taken: number }>();
+    const apptRow = (id: string) => env.DB.prepare("SELECT slot_id, status FROM appointments WHERE id = ?1").bind(id).first<{ slot_id: string; status: string }>();
+    async function addSlot(id: string, startsAt = "2026-11-10T12:00:00.000Z") {
+      await env.DB.prepare("INSERT INTO slots (id, starts_at) VALUES (?1, ?2)").bind(id, startsAt).run();
+    }
+
+    it("a pending appointment + a booking for ANOTHER slot → the same appointment moves: old slot freed, new slot taken, still one row", async () => {
+      const conv = crypto.randomUUID();
+      const s1 = crypto.randomUUID();
+      const s2 = crypto.randomUUID();
+      await seed(conv, s1);
+      await addSlot(s2);
+      const c = ctx(conv);
+      const first = await executeTool(c, "book_appointment", { slot_id: s1, pet_name: "Firulais", species: "perro" });
+      const moved = await executeTool(c, "book_appointment", { slot_id: s2, pet_name: "Firulais", species: "perro" });
+      expect(idOf(moved)).toBe(idOf(first));
+      expect(await apptRow(idOf(first)!)).toEqual({ slot_id: s2, status: "pending_deposit" });
+      expect((await slotRow(s1))?.taken).toBe(0);
+      expect((await slotRow(s2))?.taken).toBe(1);
+      expect(await count("appointments", "conversation_id = ?1", conv)).toBe(1);
+      expect(await count("appointments", "status = 'pending_deposit' AND conversation_id = ?1", conv)).toBe(1);
+    });
+
+    it("the move never steals: the other slot taken by ANOTHER chat → «ya se ocupó», the pending keeps its slot and nothing is freed", async () => {
+      const convA = crypto.randomUUID();
+      const convB = crypto.randomUUID();
+      const s1 = crypto.randomUUID();
+      const s2 = crypto.randomUUID();
+      await seed(convA, s1);
+      await seed(convB, s2);
+      const a = await executeTool(ctx(convA), "book_appointment", { slot_id: s1, pet_name: "Firulais", species: "perro" });
+      const b = await executeTool(ctx(convB), "book_appointment", { slot_id: s2, pet_name: "Luna", species: "gato" });
+      const out = await executeTool(ctx(convA), "book_appointment", { slot_id: s2, pet_name: "Firulais", species: "perro" });
+      expect(out).toMatch(/ya se ocupó/);
+      expect(await apptRow(idOf(a)!)).toEqual({ slot_id: s1, status: "pending_deposit" });
+      expect(await apptRow(idOf(b)!)).toEqual({ slot_id: s2, status: "pending_deposit" });
+      expect((await slotRow(s1))?.taken).toBe(1);
+      expect((await slotRow(s2))?.taken).toBe(1);
+    });
+
+    it("the pending lookup is per chat: chat B booking while chat A has a pending appointment gets its OWN row; A's is untouched", async () => {
+      const convA = crypto.randomUUID();
+      const convB = crypto.randomUUID();
+      const s1 = crypto.randomUUID();
+      const s2 = crypto.randomUUID();
+      await seed(convA, s1);
+      await seed(convB, s2);
+      const a = await executeTool(ctx(convA), "book_appointment", { slot_id: s1, pet_name: "Firulais", species: "perro" });
+      const b = await executeTool(ctx(convB), "book_appointment", { slot_id: s2, pet_name: "Luna", species: "gato" });
+      expect(idOf(b)).toBeDefined();
+      expect(idOf(b)).not.toBe(idOf(a));
+      expect(await apptRow(idOf(a)!)).toEqual({ slot_id: s1, status: "pending_deposit" });
+      expect(await count("appointments", "conversation_id = ?1", convB)).toBe(1);
+    });
+
+    it("two concurrent bookings with DIFFERENT slots in the same chat → one appointment, one pending, the other slot not left taken", async () => {
+      const conv = crypto.randomUUID();
+      const s1 = crypto.randomUUID();
+      const s2 = crypto.randomUUID();
+      await seed(conv, s1);
+      await addSlot(s2);
+      const c = ctx(conv);
+      await Promise.all([
+        executeTool(c, "book_appointment", { slot_id: s1, pet_name: "Firulais", species: "perro" }),
+        executeTool(c, "book_appointment", { slot_id: s2, pet_name: "Firulais", species: "perro" }),
+      ]);
+      expect(await count("appointments", "conversation_id = ?1", conv)).toBe(1);
+      expect(await count("appointments", "status = 'pending_deposit' AND conversation_id = ?1", conv)).toBe(1);
+      expect(await count("pets", "contact_id = ?1", conv)).toBe(1);
+      expect(await count("slots", "taken = 1 AND id IN (?1, ?2)", s1, s2)).toBe(1);
+    });
+
+    it("two concurrent moves of the same pending appointment → still one appointment on exactly one of the new slots, old slot free", async () => {
+      const conv = crypto.randomUUID();
+      const [s1, s2, s3] = [crypto.randomUUID(), crypto.randomUUID(), crypto.randomUUID()];
+      await seed(conv, s1);
+      await addSlot(s2);
+      await addSlot(s3, "2026-11-10T13:00:00.000Z");
+      const c = ctx(conv);
+      const first = await executeTool(c, "book_appointment", { slot_id: s1, pet_name: "Firulais", species: "perro" });
+      await Promise.all([
+        executeTool(c, "book_appointment", { slot_id: s2, pet_name: "Firulais", species: "perro" }),
+        executeTool(c, "book_appointment", { slot_id: s3, pet_name: "Firulais", species: "perro" }),
+      ]);
+      expect(await count("appointments", "conversation_id = ?1", conv)).toBe(1);
+      const row = await apptRow(idOf(first)!);
+      expect([s2, s3]).toContain(row?.slot_id);
+      expect((await slotRow(s1))?.taken).toBe(0);
+      expect(await count("slots", "taken = 1 AND id IN (?1, ?2)", s2, s3)).toBe(1);
+    });
+
+    it("m1: a chat whose appointment is already CONFIRMED on slot X asks for slot Y taken by another chat → «ya se ocupó», no id leaks", async () => {
+      const convA = crypto.randomUUID();
+      const convB = crypto.randomUUID();
+      const sx = crypto.randomUUID();
+      const sy = crypto.randomUUID();
+      await seed(convA, sx);
+      await seed(convB, sy);
+      const a = await executeTool(ctx(convA), "book_appointment", { slot_id: sx, pet_name: "Firulais", species: "perro" });
+      await env.DB.prepare("UPDATE appointments SET status = 'confirmed' WHERE id = ?1").bind(idOf(a)!).run();
+      const b = await executeTool(ctx(convB), "book_appointment", { slot_id: sy, pet_name: "Luna", species: "gato" });
+      const out = await executeTool(ctx(convA), "book_appointment", { slot_id: sy, pet_name: "Firulais", species: "perro" });
+      expect(out).toMatch(/ya se ocupó/);
+      expect(out).not.toContain(idOf(a)!);
+      expect(out).not.toContain(idOf(b)!);
+    });
+
+    it("only a PENDING appointment moves: a chat with a confirmed one books a free slot → a second, new appointment; the confirmed one stays", async () => {
+      const conv = crypto.randomUUID();
+      const sx = crypto.randomUUID();
+      const sy = crypto.randomUUID();
+      await seed(conv, sx);
+      await addSlot(sy);
+      const a = await executeTool(ctx(conv), "book_appointment", { slot_id: sx, pet_name: "Firulais", species: "perro" });
+      await env.DB.prepare("UPDATE appointments SET status = 'confirmed' WHERE id = ?1").bind(idOf(a)!).run();
+      const b = await executeTool(ctx(conv), "book_appointment", { slot_id: sy, pet_name: "Luna", species: "gato" });
+      expect(idOf(b)).toBeDefined();
+      expect(idOf(b)).not.toBe(idOf(a));
+      expect(await apptRow(idOf(a)!)).toEqual({ slot_id: sx, status: "confirmed" });
+      expect((await slotRow(sx))?.taken).toBe(1);
+      expect(await count("appointments", "conversation_id = ?1", conv)).toBe(2);
+    });
+
+    it("money: a deposit link already created on the pending appointment stays valid after the move (same appointment id, same link)", async () => {
+      const { conv, appt } = await seedBooking(20000);
+      const s2 = crypto.randomUUID();
+      await addSlot(s2);
+      const c = ctx(conv);
+      const link = await executeTool(c, "create_deposit", { appointment_id: appt });
+      expect(link).toContain("Liga de pago");
+      const moved = await executeTool(c, "book_appointment", { slot_id: s2, pet_name: "Firulais", species: "perro" });
+      expect(idOf(moved)).toBe(appt);
+      expect((await apptRow(appt))?.slot_id).toBe(s2);
+      expect(await executeTool(c, "create_deposit", { appointment_id: appt })).toBe(link);
+      expect(await count("charges", "appointment_id = ?1", appt)).toBe(1);
+    });
+
+    it("the booking result and the system prompt tell the model to call create_deposit NOW, in the same turn, without asking", async () => {
+      const conv = crypto.randomUUID();
+      const slot = crypto.randomUUID();
+      await seed(conv, slot);
+      const out = await executeTool(ctx(conv), "book_appointment", { slot_id: slot, pet_name: "Firulais", species: "perro" });
+      expect(out).toMatch(/create_deposit AHORA .*en el mismo turno, sin preguntar al dueño/);
+      expect(out).not.toMatch(/ofrece/);
+      const prompt = systemPrompt("Clínica");
+      expect(prompt).toMatch(/llama create_deposit AHORA con ese appointment_id, en el mismo turno, sin preguntar al dueño/);
+      expect(prompt).not.toMatch(/ofrece el anticipo/);
+    });
   });
 
   it("book_appointment rejects a past slot, a bad species and extra keys", async () => {

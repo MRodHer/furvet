@@ -214,4 +214,24 @@ run_mutant "sim.js renders fenced blocks as plain text (no <pre>)" public/sim.js
   's/const pre = document.createElement("pre");/const pre = document.createElement("span");/' test/ticket.test.ts || status=1
 run_mutant "console folds cards on a desktop too (narrow gate removed)" public/console.js \
   's/if (!narrow.matches) return;/if (false) return;/' test/console_auth.test.ts || status=1
+run_mutant "re-sent booking returns ANOTHER chat's appointment (ownership dropped from the idempotent lookup)" src/agent/tools.ts \
+  's/WHERE slot_id = ?1 AND conversation_id = ?2/WHERE slot_id = ?1 AND ?2 = ?2/' test/booking.test.ts || status=1
+run_mutant "re-sent booking says «ya se ocupó» again (idempotency removed: orphan slots)" src/agent/tools.ts \
+  's/return mine ? booked(mine.id) : "Ese horario ya se ocupó/return !mine ? booked(mine.id) : "Ese horario ya se ocupó/' test/booking.test.ts || status=1
+run_mutant "booking result goes back to «ofrece el anticipo» (bot asks instead of sending the link)" src/agent/tools.ts \
+  's/Llama create_deposit AHORA con ese appointment_id, en el mismo turno, sin preguntar al dueño\./Ahora ofrece el anticipo con create_deposit./' test/booking.test.ts || status=1
+run_mutant "system prompt goes back to «ofrece el anticipo»" src/agent/run.ts \
+  's/llama create_deposit AHORA con ese appointment_id, en el mismo turno, sin preguntar al dueño, y entrega la liga en esa misma respuesta/ofrece el anticipo y usa create_deposit con el appointment_id/' test/booking.test.ts || status=1
+run_mutant "pending lookup ignores the chat (a booking moves ANOTHER chat's unpaid appointment)" src/agent/tools.ts \
+  's/WHERE conversation_id = ?1 AND status = '"'"'pending_deposit'"'"' LIMIT 1/WHERE status = '"'"'pending_deposit'"'"' LIMIT 1/' test/booking.test.ts || status=1
+run_mutant "move no longer checks the new slot is free (steals a slot booked by another chat)" src/agent/tools.ts \
+  's/AND EXISTS (SELECT 1 FROM slots WHERE id = ?1 AND taken = 0 AND starts_at > ?5)/AND EXISTS (SELECT 1 FROM slots WHERE id = ?1 AND starts_at > ?5)/' test/booking.test.ts || status=1
+run_mutant "old slot freed even when the move failed" src/agent/tools.ts \
+  's/UPDATE slots SET taken = 0 WHERE id = ?1 AND changes() = 1/UPDATE slots SET taken = 0 WHERE id = ?1/' test/booking.test.ts || status=1
+run_mutant "fresh claim no longer refused while a pending appointment exists (concurrent calls → two pendings)" src/agent/tools.ts \
+  's/AND starts_at > ?2 AND NOT EXISTS (SELECT 1 FROM appointments WHERE conversation_id = ?3 AND status = '"'"'pending_deposit'"'"')/AND starts_at > ?2/' test/booking.test.ts || status=1
+run_mutant "pending lookup ignores the status (a confirmed appointment gets moved to the new slot)" src/agent/tools.ts \
+  's/SELECT id, slot_id FROM appointments WHERE conversation_id = ?1 AND status = '"'"'pending_deposit'"'"' LIMIT 1/SELECT id, slot_id FROM appointments WHERE conversation_id = ?1 LIMIT 1/' test/booking.test.ts || status=1
+run_mutant "re-sent lookup ignores the slot (returns a confirmed appointment on another slot)" src/agent/tools.ts \
+  's/SELECT id FROM appointments WHERE slot_id = ?1 AND conversation_id = ?2/SELECT id FROM appointments WHERE ?1 = ?1 AND conversation_id = ?2/' test/booking.test.ts || status=1
 exit $status
