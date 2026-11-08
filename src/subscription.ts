@@ -75,7 +75,23 @@ export function eventInsert(db: D1Database, subscriptionId: string, kind: EventK
 
 // Resource shapes [subscriptions/v1 schema: subscription.status, plan_id, billing_info.last_payment,
 // billing_info.next_billing_time]. PAYMENT.SALE.COMPLETED is the deprecated Payments v1 "sale":
-// amount.total / amount.currency, billing_agreement_id = the subscription id (not measured in sandbox).
+// amount.total / amount.currency, billing_agreement_id = the subscription id. Measured in sandbox
+// (2026-11-08): Subscriptions v1 writes ONE decimal in billing_info.last_payment ("999.0"); Payments v1
+// writes two ("999.00").
+const ONE_DECIMAL = /^\d{1,10}\.\d$/;
+/**
+ * Money from a verified subscription webhook, or null when unreadable. Null never activates
+ * (ACTIVATED/SALE fall to amount_mismatch) and never blocks a deactivation, which applies on the id
+ * alone. A throw here used to turn the whole event into `invalid_resource` and lose the cancellation.
+ */
+function moneyOrNull(value: string, currency: string, eventId: string): { amountCents: number; currency: string } | null {
+  try {
+    return { amountCents: valueToCents(ONE_DECIMAL.test(value) ? `${value}0` : value), currency };
+  } catch {
+    log("subscription_webhook_amount_unreadable", { event_id: eventId });
+    return null;
+  }
+}
 const Money = z.object({ currency_code: z.string().length(3), value: z.string() });
 const SubscriptionResource = z.object({
   id: z.string().min(1),
@@ -117,14 +133,14 @@ export async function handleSubscriptionEvent(env: Env, event: { id: string; eve
     if (isSale) {
       const r = SaleResource.parse(event.resource);
       subId = r.billing_agreement_id;
-      paid = { amountCents: valueToCents(r.amount.total), currency: r.amount.currency };
+      paid = moneyOrNull(r.amount.total, r.amount.currency, event.id);
     } else {
       const r = SubscriptionResource.parse(event.resource);
       subId = r.id;
       planId = r.plan_id ?? null;
       nextBillingAt = r.billing_info?.next_billing_time ?? null;
       const lp = r.billing_info?.last_payment?.amount;
-      if (lp) paid = { amountCents: valueToCents(lp.value), currency: lp.currency_code };
+      if (lp) paid = moneyOrNull(lp.value, lp.currency_code, event.id);
     }
   } catch {
     log("subscription_webhook_unknown", { event_id: event.id, reason: "invalid_resource" });
