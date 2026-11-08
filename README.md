@@ -3,7 +3,7 @@
 *Because every patient is someone's fur bestie.* Families pay with PayPal; the clinic keeps the clinical record and the money honest.
 
 > Built for the PayPal AI Hackathon 2026. Runs 100% in PayPal **sandbox**: no real money moves.
-> Everything described below as *built* is in this repository, covered by the test suite (199 tests) and deployed at the live URL. The two items marked *not built* are the only parts of the vision that are not in the code.
+> Everything described below as *built* is in this repository, covered by the test suite (199 tests) and deployed at the live URL. The one item marked *not built* (a real WhatsApp channel) is the only part of the vision that is not in the code.
 
 **Live demo:** <https://furvet.mauricio-rodher.workers.dev> · **Video:** `<YouTube URL>`
 
@@ -30,7 +30,7 @@ If the demo cap is reached (300 chat messages a day, 60 per conversation) the ch
 3. **Clinical draft and approval** *(built)*. Claude fills a SOAP note, vital signs, exam by body system, prescription and vaccines through a forced tool whose strict schema has **no price field**. Every AI-filled field is flagged and linked to the transcript sentence that supports it; a deterministic validator discards any quote that is not literally in the transcript, any number not present in its quote, any value outside physiological ranges, and marks a prescription incomplete until dose, frequency and duration carry a quoted number and unit. The vet reviews, edits and approves once.
 4. **Bill and balance payment** *(built)*. The approved body carries catalog ids and quantities only; **prices come from the server catalog, never from the model**. Total − captured deposit = balance, paid through a second PayPal order with the same verified webhook and the same append-only ledger.
 5. **Delivery** *(built)*. Urgent instructions and the itemized account go to the owner the moment the vet approves, never waiting on PayPal. The prescription is printed and signed by the doctor only. The full report (with the plain-language explanation the doctor chose to release, and images chosen by the vet) is released as a PDF once the balance is captured.
-6. **Vet as customer** *(not built)*. Charging the clinic for the assistant with PayPal Subscriptions is not in the code.
+6. **Vet as customer** *(built)*. The clinic pays for the AI assistant with a **PayPal Subscription** (sandbox plan, $999.00 MXN/month): the AI draft is gated on an active subscription, activated and kept current only by verified webhook events (`BILLING.SUBSCRIPTION.*`, `PAYMENT.SALE.COMPLETED`) whose amount **and** currency match the plan. Console card 0 shows the state and starts the subscription.
 
 ## Architecture
 
@@ -55,7 +55,7 @@ Devpost requires this disclosure. The git tag `pre-hackathon` marks the copied c
 - The *pattern* in `src/agent/claude.ts` (forced `tool_choice` + strict schema on the tool input) and the *rules* of `src/agent/run.ts` (fail-closed guards, one place talks to Claude, silence instead of invented replies) come from the author's earlier Python WhatsApp sales agent; the TypeScript is new.
 - The clinical field names and enums (SOAP sections, vitals, prescription, vaccines) follow the author's earlier vet-clinic app; no component code was copied.
 
-**Built during the hackathon (Nov 4 onward):** everything else — the Worker, D1 schema and migrations, money/ledger modules, PayPal client, webhook, booking tools, chat simulator, board, doctor auth and console, transcription, speaker roles, clinical schema, grounding validator, bill, delivery (tokens, PDFs, report gate), plain-language explanation, hardening, tests and scripts.
+**Built during the hackathon (Nov 4 onward):** everything else — the Worker, D1 schema and migrations, money/ledger modules, PayPal client, webhook, booking tools, chat simulator, board, doctor auth and console, transcription, speaker roles, clinical schema, grounding validator, bill, delivery (tokens, PDFs, report gate), plain-language explanation, clinic subscription (PayPal Subscriptions + webhook state machine), hardening, tests and scripts.
 
 ## Setup
 

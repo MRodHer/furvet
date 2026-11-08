@@ -136,15 +136,16 @@ export function webhookRoutes(paypalFor: (env: Env) => PayPalClient | null) {
           log("paypal_webhook_unknown_order", { event_id: event.id, reason: charge ? "order_mismatch" : "unknown_charge" });
           return c.json({ status: "ignored" });
         }
+        // H7 + M1: a captured charge is terminal. A second COMPLETED (same or another capture id) neither
+        // re-settles nor re-sends the owner a token, and a late DENIED never degrades it; the DB barriers are
+        // charge_events_one_captured (0004) and the captured-first view charges_current (0006).
+        if (charge.status === "captured") {
+          log("paypal_webhook_already_captured", { event_id: event.id, charge_id: charge.id, event_type: event.event_type });
+          return c.json({ status: "already_captured" });
+        }
         let status: ChargeStatus = "denied";
         let amountCents: number | null = null;
         if (event.event_type === "PAYMENT.CAPTURE.COMPLETED") {
-          // H7: a charge is captured once. A second capture (same or another capture id) neither re-settles
-          // nor re-sends the owner a token; the DB index charge_events_one_captured is the second barrier.
-          if (charge.status === "captured") {
-            log("paypal_webhook_already_captured", { event_id: event.id, charge_id: charge.id });
-            return c.json({ status: "already_captured" });
-          }
           try {
             amountCents = valueToCents(r.data.amount.value);
           } catch {

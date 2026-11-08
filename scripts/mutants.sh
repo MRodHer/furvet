@@ -236,6 +236,12 @@ run_mutant "re-sent lookup ignores the slot (returns a confirmed appointment on 
   's/SELECT id FROM appointments WHERE slot_id = ?1 AND conversation_id = ?2/SELECT id FROM appointments WHERE ?1 = ?1 AND conversation_id = ?2/' test/booking.test.ts || status=1
 run_mutant "«audio borrado» label shows the raw UTC instant, not the clinic zone (fix-audio-borrado-label)" public/console.js \
   's/Audio borrado y transcrito · \${clinicTime(consult.transcribed_at)}/Audio borrado y transcrito · \${consult.transcribed_at}/' test/console_auth.test.ts || status=1
+run_mutant "webhook: a late DENIED after captured is recorded again (captured-is-terminal guard limited to COMPLETED)" src/routes/webhook.ts \
+  's/if (charge.status === "captured") {/if (charge.status === "captured" \&\& event.event_type === "PAYMENT.CAPTURE.COMPLETED") {/' test/webhook.test.ts || status=1
+run_mutant "charges_current takes the last event again (0006 view without captured-first order)" migrations/0006_captured_is_terminal.sql \
+  "s/ORDER BY (status = 'captured') DESC, id DESC LIMIT 1/ORDER BY id DESC LIMIT 1/" test/webhook.test.ts || status=1
+run_mutant "agent answers only in Spanish again (owner-language line removed)" src/agent/run.ts \
+  's/Responde en el idioma en que escribe el dueño (español o inglés; si escribe en inglés, contesta en inglés); por defecto español mexicano/Responde en español mexicano/' test/booking.test.ts || status=1
 run_mutant "per-take dose relaxation removed: «media tableta» / «un cuarto» no longer count, only digits (rx-vet-format)" src/clinical/grounding.ts \
   's/QTY_TOKEN_RE.test(v) && DOSE_UNIT_RE.test(v)/numbersIn(v).length > 0 \&\& DOSE_UNIT_RE.test(v)/' test/grounding.test.ts || status=1
 run_mutant "numeral counts without adjacency to the unit: «un poquito de tableta» passes as a dose (rx-vet-format)" src/clinical/grounding.ts \
